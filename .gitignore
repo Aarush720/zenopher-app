@@ -13,6 +13,7 @@ target/
 
 # Local editor and OS files
 .DS_Store
+**/*.DS_Store
 ._*
 .idea/
 .vscode/*.log
