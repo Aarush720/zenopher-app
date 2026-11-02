@@ -1,0 +1,1903 @@
+:root {
+  /* Color Tokens */
+  --surface: #070707;
+  --on-surface: #111111;
+  --container: #1B1B1B;
+  --container-hover: #272727;
+  --container-pressed: #151515;
+  --text: #F5F5F2;
+  --ui-selected: #F5F5F2;
+  --ui-icon: #F5F5F2;
+  --ui-selected-text: var(--surface);
+
+  --text-secondary: rgba(255, 255, 255, 0.68);
+  --text-muted: rgba(255, 255, 255, 0.42);
+  --text-disabled: rgba(255, 255, 255, 0.24);
+
+  /* Reduced Geometry Tokens */
+  --radius-panel: 18px;
+  --radius-section: 16px;
+  --radius-tile: 12px;
+  --radius-control: 14px;
+  --radius-pill: 9999px;
+
+  --space-outer: 14px;
+  --space-panel: 14px;
+  --space-section: 14px;
+  --space-tile: 14px;
+  --space-control: 8px;
+  --space-panel-padding: 24px;
+  --motion: 220ms cubic-bezier(0.23, 1, 0.32, 1);
+  --canvas-motion: 520ms cubic-bezier(0.16, 1, 0.3, 1);
+  --editor-motion: 900ms cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* Font Families */
+  --font-sans: 'Lufga', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+@font-face {
+  font-family: 'Lufga';
+  src: url('/fonts/lufga/Lufga-Thin.otf') format('opentype');
+  font-style: normal;
+  font-weight: 100;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Lufga';
+  src: url('/fonts/lufga/Lufga-ExtraLight.otf') format('opentype');
+  font-style: normal;
+  font-weight: 200;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Lufga';
+  src: url('/fonts/lufga/Lufga-Light.otf') format('opentype');
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Lufga';
+  src: url('/fonts/lufga/Lufga-Regular.otf') format('opentype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Lufga';
+  src: url('/fonts/lufga/Lufga-Medium.otf') format('opentype');
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Lufga';
+  src: url('/fonts/lufga/Lufga-SemiBold.otf') format('opentype');
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Lufga';
+  src: url('/fonts/lufga/Lufga-Bold.otf') format('opentype');
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Lufga';
+  src: url('/fonts/lufga/Lufga-ExtraBold.otf') format('opentype');
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Lufga';
+  src: url('/fonts/lufga/Lufga-Black.otf') format('opentype');
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Lufga';
+  src: url('/fonts/lufga/Lufga-Italic.otf') format('opentype');
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Lufga';
+  src: url('/fonts/lufga/Lufga-BoldItalic.otf') format('opentype');
+  font-style: italic;
+  font-weight: 700;
+  font-display: swap;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background-color: var(--surface);
+  background-image: radial-gradient(circle at 74% -12%, rgba(255, 255, 255, 0.055), transparent 34rem);
+  color: var(--text);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+  overflow-x: hidden;
+  user-select: none;
+}
+
+/* UI chrome uses gray; pure white is reserved for readable text. */
+.lucide {
+  color: var(--ui-icon);
+}
+
+/* Base Panel Styles - Flat monochrome surfaces, zero borders, zero shadows */
+.floating-panel {
+  background: linear-gradient(180deg, #151515 0%, var(--on-surface) 42%);
+  border-radius: var(--radius-panel);
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+  filter: none !important;
+  position: relative;
+  overflow: hidden;
+}
+
+.canvas-toolbar {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), var(--on-surface) 48%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 8px 22px rgba(0, 0, 0, 0.18);
+}
+
+.canvas-toolbar::before {
+  position: absolute;
+  top: 1px;
+  right: 18px;
+  left: 18px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  content: '';
+  pointer-events: none;
+}
+
+/* App Shell Grid - Desktop layout */
+.app-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+  gap: 8px;
+  padding: 14px;
+  min-height: 100vh;
+  height: 100vh;
+  background: transparent;
+  box-sizing: border-box;
+  overflow: hidden;
+  transition: grid-template-columns var(--editor-motion), gap var(--editor-motion), padding var(--editor-motion);
+  will-change: grid-template-columns;
+}
+
+.main-area {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  height: calc(100vh - 28px);
+  overflow: hidden;
+  transition: width var(--editor-motion), gap var(--editor-motion);
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: 310px minmax(0, 1fr);
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Editor 3-Panel Workspace */
+.editor-workspace {
+  display: grid;
+  grid-template-columns: 270px minmax(0, 1fr) 310px;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  background: #000000;
+}
+
+/* Creative mode keeps Zenopher's floating-panel language throughout the workspace.
+   The compact tool rail is deliberately separate from Layers so the canvas remains
+   the visual center of gravity. */
+.creative-mode-workspace {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  gap: 0;
+  background: transparent;
+}
+
+.creative-tools-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  min-height: 0;
+  padding: 10px 8px;
+  gap: 10px;
+  background: linear-gradient(180deg, #171717 0%, #101010 100%);
+}
+
+.creative-tools-header,
+.creative-tools-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  color: var(--text-secondary);
+}
+
+.creative-tools-header {
+  height: 34px;
+  border-radius: 11px;
+  background: var(--container);
+  color: var(--text);
+}
+
+.creative-tools-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  min-height: 0;
+  gap: 4px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.creative-tools-list::-webkit-scrollbar {
+  display: none;
+}
+
+.creative-tool-button {
+  position: relative;
+  display: flex;
+  flex: 0 0 42px;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 160ms ease-out, color 160ms ease-out, transform 120ms ease-out;
+}
+
+.creative-tool-button:hover {
+  background: var(--container-hover);
+  color: var(--text);
+}
+
+.creative-tool-button:active {
+  transform: scale(0.96);
+}
+
+.creative-tool-button.selected {
+  background: var(--ui-selected);
+  color: var(--ui-selected-text);
+}
+
+.creative-tool-key {
+  position: absolute;
+  right: 6px;
+  bottom: 4px;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  line-height: 1;
+  opacity: 0.5;
+}
+
+.creative-tool-button.selected .creative-tool-key {
+  color: var(--ui-selected-text);
+}
+
+.creative-tools-divider {
+  width: 28px;
+  height: 1px;
+  margin: 4px 0;
+  flex: 0 0 1px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.creative-tools-footer {
+  gap: 5px;
+  min-height: 24px;
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
+.creative-tools-status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #a7f3d0;
+  box-shadow: 0 0 0 3px rgba(167, 243, 208, 0.08);
+}
+
+.creative-mode-workspace > .floating-panel {
+  min-width: 0;
+}
+
+/* PhotoCraft is the Creative engine, never the product shell. Keep the full Rust/egui
+   capability surface inside one Zenopher-owned panel and let its themed UI fill the workspace. */
+.creative-mode-workspace > .photocraft-wasm-workspace {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  border-radius: var(--radius-panel);
+  background: var(--on-surface);
+  overflow: hidden;
+}
+
+.creative-mode-workspace .photocraft-wasm-frame {
+  border-radius: var(--radius-panel);
+}
+
+/* Large Reference Card System (matching reference image) */
+.grid-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 1100px) {
+  .grid-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.design-card {
+  background: transparent;
+  border-radius: var(--radius-section);
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  transition: transform 180ms ease-out, background var(--motion);
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 1 / 1;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Large Square Preview Viewport */
+.design-card-preview {
+  width: 100%;
+  height: 100%;
+  background: #080808;
+  border-radius: var(--radius-tile);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+  transition: transform 220ms cubic-bezier(0.23, 1, 0.32, 1), background var(--motion);
+}
+
+.design-card:hover .design-card-preview,
+.design-card:focus-visible .design-card-preview {
+  transform: translateY(-3px) scale(1.012);
+}
+
+.design-card-info {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 20px;
+  background: linear-gradient(180deg, transparent 35%, rgba(0, 0, 0, 0.88) 100%);
+  opacity: 1;
+  pointer-events: none;
+  transition: opacity var(--motion);
+}
+
+.design-card:hover .design-card-info,
+.design-card:focus-within .design-card-info {
+  background: linear-gradient(180deg, transparent 24%, rgba(0, 0, 0, 0.92) 100%);
+}
+
+.home-hero {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 188px;
+  padding: 28px 30px;
+  overflow: hidden;
+  border-radius: var(--radius-section);
+  background:
+    linear-gradient(112deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.018) 48%, transparent 78%),
+    radial-gradient(circle at 92% 20%, rgba(255, 255, 255, 0.12), transparent 22rem),
+    #181818;
+}
+
+.home-hero::after {
+  position: absolute;
+  top: -90px;
+  right: 11%;
+  width: 340px;
+  height: 340px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 50%;
+  content: '';
+  box-shadow: 0 0 0 24px rgba(255, 255, 255, 0.02), 0 0 0 48px rgba(255, 255, 255, 0.015);
+  pointer-events: none;
+}
+
+.home-hero-copy,
+.home-hero-actions {
+  position: relative;
+  z-index: 1;
+}
+
+.home-hero-copy {
+  max-width: 580px;
+}
+
+.home-hero-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 14px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.home-hero-eyebrow::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text);
+  content: '';
+}
+
+.home-hero h2 {
+  max-width: 560px;
+  color: var(--text);
+  font-size: clamp(26px, 3vw, 40px);
+  font-weight: 800;
+  letter-spacing: -0.055em;
+  line-height: 1.02;
+}
+
+.home-hero p {
+  max-width: 450px;
+  margin-top: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.home-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.home-hero-actions button {
+  height: 40px;
+  padding: 0 14px;
+  gap: 7px;
+  font-size: 12px;
+}
+
+.home-hero-actions button:not(.primary) {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+.home-hero-actions button:not(.primary):hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.home-hero-sparkle {
+  position: absolute;
+  right: 26px;
+  top: 26px;
+  color: rgba(255, 255, 255, 0.56);
+  transform: rotate(12deg);
+}
+
+.design-card-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -0.2px;
+}
+
+.design-card-subtitle {
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.design-card-preview .btn-square-sm,
+.design-card-preview > div[style*="z-index"] {
+  z-index: 4;
+}
+
+.canvas-loader {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  width: 100%;
+  height: 100%;
+  min-width: 100%;
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  background: #000000 !important;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.canvas-loader-ring {
+  width: 28px;
+  height: 28px;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-top-color: var(--ui-selected);
+  border-radius: 50%;
+  animation: canvasLoaderSpin 900ms linear infinite;
+}
+
+@keyframes canvasLoaderSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.tile-loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  border-radius: inherit;
+  background: #000000;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.tile-loading-illustration {
+  color: var(--text);
+  opacity: 0.9;
+  animation: tileLoaderFloat 900ms ease-in-out infinite;
+}
+
+@keyframes tileLoaderFloat {
+  0%, 100% {
+    transform: translateY(3px);
+    opacity: 0.55;
+  }
+  50% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+
+.editor-entry-curtain {
+  position: fixed;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000000;
+  /* This is a visual transition only; never let a stale curtain block the editor. */
+  pointer-events: none;
+  overflow: hidden;
+  transform: scale(1);
+  transform-origin: center center;
+  will-change: left, top, width, height, border-radius, transform, opacity;
+  transition: left var(--editor-motion), top var(--editor-motion), width var(--editor-motion), height var(--editor-motion), border-radius var(--editor-motion), transform 440ms cubic-bezier(0.22, 1, 0.36, 1), filter 440ms ease, opacity 440ms ease;
+}
+
+.editor-entry-curtain.is-expanding {
+  opacity: 1;
+}
+
+.editor-entry-curtain.is-covered {
+  opacity: 1;
+  filter: none;
+  pointer-events: none;
+}
+
+.editor-entry-curtain.is-revealing {
+  transform: scale(1);
+  filter: blur(16px);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.editor-entry-loader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.editor-entry-curtain.is-covered .editor-entry-loader {
+  opacity: 0;
+  transform: translateY(6px);
+  animation: editorLoaderAppear 220ms ease-out var(--editor-motion) forwards;
+}
+
+@keyframes editorLoaderAppear {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Tinted gallery sections keep their heading and scrollable tile rail together. */
+.gallery-section {
+  background: rgba(255, 255, 255, 0.035);
+  border-radius: var(--radius-section);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.gallery-section-header {
+  min-width: 0;
+}
+
+.gallery-tile-row {
+  display: flex;
+  gap: 16px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--container-hover) transparent;
+}
+
+.gallery-tile-row > .design-card {
+  flex: 0 0 clamp(260px, 31%, 420px);
+  min-width: 0;
+}
+
+.trash-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.trash-countdown,
+.trash-card-actions {
+  z-index: 4;
+}
+
+/* Control Buttons & Inputs */
+button {
+  font-family: inherit;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  background: var(--container);
+  color: var(--text-secondary);
+  border-radius: var(--radius-control);
+  transition: background var(--motion), color var(--motion), transform 150ms ease-out;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+button:hover {
+  background: var(--container-hover);
+  color: var(--text);
+}
+
+button:not(:disabled):active {
+  background: var(--container-pressed);
+  transform: scale(0.97);
+}
+
+button.primary {
+  background: var(--ui-selected);
+  color: var(--ui-selected-text);
+  font-weight: 700;
+}
+
+button.primary:hover {
+  background: #EAEAEA;
+  color: var(--ui-selected-text);
+}
+
+button.primary:disabled {
+  background: var(--container);
+  color: var(--text-disabled);
+  cursor: not-allowed;
+  transform: none;
+}
+
+button.selected {
+  background: var(--ui-selected);
+  color: var(--ui-selected-text);
+}
+
+button.selected * {
+  color: var(--ui-selected-text) !important;
+}
+
+button:disabled {
+  background: var(--container);
+  color: var(--text-disabled);
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Square Control Button */
+.btn-square {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: var(--radius-control);
+  padding: 0;
+}
+
+.btn-square-sm {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  border-radius: 6px;
+  padding: 0;
+}
+
+/* Form Inputs */
+input, select, textarea {
+  background: var(--container);
+  color: var(--text);
+  border: none;
+  outline: none;
+  border-radius: var(--radius-control);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 10px 14px;
+  transition: background var(--motion);
+  width: 100%;
+}
+
+input:hover, select:hover, textarea:hover {
+  background: var(--container-hover);
+}
+
+input:focus, select:focus, textarea:focus {
+  background: var(--container-hover);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
+}
+
+input::placeholder, textarea::placeholder {
+  color: var(--text-muted);
+}
+
+/* Modal Popup Styles */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.48);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fadeIn var(--motion);
+}
+
+.modal {
+  background: var(--on-surface);
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: var(--radius-panel);
+  max-width: 600px;
+  width: 100%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: modalScale 220ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.modal-header {
+  padding: 20px 24px 14px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modal-body {
+  padding: 0 24px 20px 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.modal-footer {
+  padding: 14px 24px 20px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+/* Keyframe Animations */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modalScale {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Scrollbar Customization */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--container);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--container-hover);
+}
+
+/* Accordion Rows */
+.accordion-item {
+  background: var(--container);
+  border-radius: var(--radius-control);
+  margin-bottom: 8px;
+  overflow: hidden;
+  flex: 0 0 auto;
+  transition: background var(--motion);
+}
+
+.accordion-header {
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.accordion-header:hover {
+  color: var(--text);
+}
+
+.accordion-body {
+  padding: 10px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.properties-scroll {
+  min-height: 0;
+  min-width: 0;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+/* Inspector aesthetic: quiet section dividers and compact gray controls. */
+.properties-panel {
+  background: var(--on-surface);
+  padding: 0 !important;
+  gap: 0 !important;
+}
+
+.properties-panel .properties-tabs {
+  position: relative;
+  margin: 12px 14px 0;
+  background: var(--container);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.properties-panel .properties-tab-indicator {
+  position: absolute;
+  z-index: 0;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc(50% - 6px);
+  border-radius: 10px;
+  background: var(--ui-selected);
+  transition: transform 280ms cubic-bezier(0.32, 0.72, 0, 1);
+  pointer-events: none;
+}
+
+.properties-panel .properties-tabs[data-active-tab='review'] .properties-tab-indicator {
+  transform: translateX(calc(100% + 4px));
+}
+
+.properties-panel .properties-tabs button,
+.properties-panel .properties-tabs button:hover,
+.properties-panel .properties-tabs button:active,
+.properties-panel .properties-tabs button.selected {
+  position: relative;
+  z-index: 1;
+  background: transparent !important;
+  color: var(--text-secondary) !important;
+  transition: color 180ms ease-out;
+}
+
+.properties-panel .properties-tabs button.selected,
+.properties-panel .properties-tabs button.selected:hover {
+  color: var(--ui-selected-text) !important;
+}
+
+.properties-panel > .properties-scroll {
+  padding: 0 14px 14px;
+}
+
+.properties-panel .accordion-item {
+  background: transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0;
+  margin-bottom: 0;
+}
+
+.properties-panel .accordion-header {
+  min-height: 58px;
+  padding: 18px 0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.properties-panel .accordion-header:hover {
+  color: var(--text-secondary);
+  background: transparent;
+}
+
+.properties-panel .accordion-body {
+  padding: 0 0 20px;
+}
+
+.properties-panel input,
+.properties-panel select,
+.properties-panel textarea {
+  background: #2A2A2A;
+  border-radius: 12px;
+}
+
+.review-panel {
+  min-width: 0;
+}
+
+/* Grids */
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.grid-5 {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+}
+
+/* Layout safety: every grid child may shrink instead of forcing overlap. */
+.app-shell,
+.main-area,
+.workspace,
+.editor-workspace,
+.floating-panel,
+.design-card,
+.modal,
+.modal-body {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.top-bar > * {
+  min-width: 0;
+}
+
+.navigation-rail,
+.navigation-rail .floating-panel,
+.top-bar {
+  transition: width var(--editor-motion), min-width var(--editor-motion), height var(--editor-motion), margin-left var(--editor-motion), padding var(--editor-motion), opacity var(--editor-motion), border-radius var(--editor-motion);
+}
+
+/* Top-bar states stay mounted so the dashboard-to-editor change can slide
+   between real layouts instead of replacing the contents in one frame. */
+.top-bar-title,
+.top-bar-center,
+.top-bar-actions {
+  min-width: 0;
+}
+
+.top-bar-title {
+  position: relative;
+  display: grid;
+  align-items: center;
+  min-width: 130px;
+  max-width: 280px;
+}
+
+.top-bar-title-state,
+.top-bar-center-state,
+.top-bar-action-state {
+  transition: opacity var(--editor-motion), transform var(--editor-motion), visibility var(--editor-motion);
+}
+
+.top-bar-title-state {
+  grid-area: 1 / 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  transform: translateX(10px);
+}
+
+.top-bar-title-state h1 {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.top-bar-save-status {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.top-bar-center {
+  position: relative;
+  display: grid;
+  flex: 1 1 auto;
+  height: 100%;
+  align-items: center;
+}
+
+.top-bar-center-state {
+  grid-area: 1 / 1;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  transform: translateX(12px);
+}
+
+.top-bar-actions {
+  position: relative;
+  display: grid;
+  flex: 0 0 auto;
+  align-items: center;
+  margin-left: auto;
+}
+
+.top-bar-action-state {
+  grid-area: 1 / 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  transform: translateX(12px);
+}
+
+.top-bar-title-state:not(.is-visible),
+.top-bar-center-state:not(.is-visible),
+.top-bar-action-state:not(.is-visible) {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.top-bar-title-state.is-visible,
+.top-bar-center-state.is-visible,
+.top-bar-action-state.is-visible {
+  visibility: visible;
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+/* Editor mode control is centered against the viewport, including the Z rail. */
+.app-shell.editor-mode .top-bar-center-state.is-visible {
+  position: fixed;
+  top: 34px;
+  left: 50%;
+  z-index: 40;
+  width: max-content;
+  transform: translate(-50%, -50%);
+}
+
+.editor-mode-gooey {
+  --gn-frame: rgba(28, 28, 28, 0.92) !important;
+  --gn-pill: #FFFFFF !important;
+  --gn-frame-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 8px 18px rgba(0, 0, 0, 0.18) !important;
+}
+
+.editor-mode-gooey .gooey-nav__link {
+  min-width: 84px;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.top-bar h1,
+.top-bar input {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-loading {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.loading-mark {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: var(--ui-selected);
+  color: var(--ui-selected-text);
+  font-weight: 800;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ui-selected) !important;
+  outline-offset: 2px;
+}
+
+@media (hover: none) {
+  .design-card-preview {
+    transform: none !important;
+  }
+}
+
+@media (max-width: 1180px) {
+  .editor-workspace {
+    grid-template-columns: 220px minmax(0, 1fr) 260px;
+    gap: 8px;
+  }
+
+  .workspace {
+    grid-template-columns: minmax(240px, 0.35fr) minmax(0, 0.65fr);
+    gap: 8px;
+  }
+
+  .app-shell,
+  .main-area {
+    gap: 8px;
+  }
+}
+
+@media (max-width: 980px) {
+  .app-shell {
+    grid-template-columns: 72px minmax(0, 1fr);
+    padding: 10px;
+  }
+
+  .navigation-rail {
+    width: 72px !important;
+    min-width: 72px !important;
+  }
+
+  .navigation-rail .nav-item-label,
+  .navigation-rail .floating-panel > div:first-child button span,
+  .navigation-rail .floating-panel > div:first-child button svg,
+  .navigation-rail .floating-panel > div:first-child > div:last-child {
+    display: none;
+  }
+
+  .navigation-rail .floating-panel > div:first-child {
+    justify-content: center;
+  }
+
+  .navigation-rail .floating-panel > div:nth-child(2) {
+    padding: 8px 6px !important;
+  }
+
+  .navigation-rail .nav-item {
+    justify-content: center;
+    padding: 0 !important;
+  }
+
+
+  .editor-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(440px, 1fr) auto auto;
+    overflow-y: auto;
+  }
+
+  .editor-workspace > .floating-panel:first-child,
+  .editor-workspace > .floating-panel:last-child {
+    min-height: 260px;
+    max-height: 420px;
+  }
+
+  .creative-mode-workspace {
+    grid-template-columns: 76px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto auto;
+  }
+
+  .creative-mode-workspace > .creative-tools-panel {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  .creative-mode-workspace > .floating-panel:nth-child(2) {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .creative-mode-workspace > .floating-panel:nth-child(3) {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .creative-mode-workspace > .floating-panel:nth-child(4) {
+    grid-column: 2;
+    grid-row: 3;
+  }
+
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-rows: minmax(0, auto);
+    overflow-y: auto;
+  }
+
+  .workspace > .floating-panel {
+    min-height: 320px;
+  }
+
+  .grid-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+    padding: 8px;
+  }
+
+  .navigation-rail {
+    width: 100% !important;
+    min-width: 0 !important;
+    height: auto !important;
+    flex-direction: row !important;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .navigation-rail .floating-panel:first-child {
+    display: none !important;
+  }
+
+  .navigation-rail .floating-panel:nth-child(2) {
+    flex-direction: row !important;
+    align-items: center;
+    overflow-x: auto;
+  }
+
+  .navigation-rail .floating-panel > div:first-child,
+  .navigation-rail .floating-panel > div:nth-child(2) > div {
+    display: none;
+  }
+
+  .navigation-rail .nav-item {
+    flex: 0 0 44px;
+  }
+
+
+  .main-area {
+    height: auto;
+    min-height: calc(100vh - 72px);
+  }
+
+  .top-bar {
+    flex-wrap: wrap;
+    height: auto !important;
+    min-height: 50px;
+    padding: 8px !important;
+  }
+
+  .top-bar > div:nth-child(2) {
+    order: 3;
+    flex-basis: 100%;
+    justify-content: flex-start !important;
+  }
+
+  .top-bar > div:nth-child(3) {
+    margin-left: auto !important;
+  }
+
+  .editor-workspace {
+    grid-template-rows: minmax(360px, 1fr) auto auto;
+  }
+
+  .creative-mode-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto minmax(360px, 1fr) auto;
+  }
+
+  .creative-mode-workspace > .creative-tools-panel,
+  .creative-mode-workspace > .floating-panel:nth-child(2),
+  .creative-mode-workspace > .floating-panel:nth-child(3),
+  .creative-mode-workspace > .floating-panel:nth-child(4) {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .creative-tools-panel {
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+  }
+
+  .creative-tools-header,
+  .creative-tools-footer {
+    width: auto;
+    flex: 0 0 auto;
+    writing-mode: horizontal-tb;
+    transform: none;
+  }
+
+  .creative-tools-list {
+    flex-direction: row;
+    overflow-x: auto;
+  }
+
+  .creative-tools-divider {
+    width: 1px;
+    height: 28px;
+    margin: 0 4px;
+  }
+
+  .grid-cards,
+  .grid-3,
+  .grid-4,
+  .grid-5,
+  .mode-options {
+    grid-template-columns: 1fr;
+  }
+
+  .home-hero {
+    align-items: flex-start;
+    flex-direction: column;
+    min-height: 0;
+    padding: 22px;
+  }
+
+  .home-hero::after {
+    right: -130px;
+    top: -130px;
+  }
+
+  .custom-size-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .modal-backdrop {
+    padding: 8px;
+  }
+
+  .modal-header,
+  .modal-body,
+  .modal-footer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
+.photocraft-wasm-workspace {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  background: #262626;
+}
+
+.photocraft-wasm-frame {
+  position: relative;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  pointer-events: auto;
+  opacity: 0;
+  background: #262626;
+  transition: opacity 180ms ease-out;
+}
+
+.photocraft-wasm-frame.is-loaded {
+  opacity: 1;
+}
+
+.photocraft-wasm-loading {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.photocraft-wasm-loading-icon {
+  animation: photocraft-wasm-spin 900ms linear infinite;
+}
+
+.photocraft-wasm-open {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+  background: rgba(38, 38, 38, 0.88);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 10px;
+  text-decoration: none;
+  backdrop-filter: blur(8px);
+}
+
+.photocraft-wasm-save {
+  position: absolute;
+  right: 168px;
+  bottom: 12px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+  background: rgba(38, 38, 38, 0.88);
+  color: rgba(255, 255, 255, 0.72);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+
+.photocraft-wasm-save:hover:not(:disabled) {
+  color: #ffffff;
+}
+
+.photocraft-wasm-save:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.photocraft-wasm-open:hover {
+  color: #ffffff;
+}
+
+@keyframes photocraft-wasm-spin {
+  to { transform: rotate(360deg); }
+}
+
+
+/* Editor mode: the workspace takes the full shell and the navigation becomes a profile square. */
+.app-shell.editor-mode {
+  grid-template-columns: minmax(0, 0px) minmax(0, 1fr);
+  gap: 0;
+  padding: 8px;
+}
+
+.app-shell.editor-mode .navigation-rail {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 30;
+  width: 52px !important;
+  min-width: 52px !important;
+  height: 52px;
+  gap: 0;
+  overflow: visible;
+  /* Only the compact Z control should sit above the embedded editor. */
+  pointer-events: none;
+  transform-origin: top left;
+}
+
+.app-shell.editor-mode .navigation-rail .floating-panel:first-child {
+  display: flex !important;
+  width: 52px;
+  min-width: 52px;
+  height: 52px;
+  padding: 0;
+  gap: 0;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  border-radius: 14px;
+}
+
+.app-shell.editor-mode .navigation-rail .floating-panel:first-child > button {
+  display: none;
+}
+
+.app-shell.editor-mode .navigation-rail .floating-panel:nth-child(2) {
+  position: absolute;
+  top: 60px;
+  left: 0;
+  display: flex !important;
+  width: 220px;
+  height: calc(100% - 60px);
+  min-height: 0;
+  box-sizing: border-box;
+  padding-bottom: 14px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-10px);
+  transition: width var(--editor-motion), height var(--editor-motion), opacity var(--editor-motion), transform var(--editor-motion);
+}
+
+.app-shell.editor-mode .top-bar {
+  margin-left: 60px;
+  width: calc(100% - 60px);
+  height: 52px;
+  min-height: 52px;
+  padding-left: 12px !important;
+}
+
+.app-shell.editor-mode .main-area {
+  grid-column: 2;
+  height: calc(100vh - 16px);
+}
+
+.app-shell.editor-mode .editor-workspace {
+  min-width: 0;
+  margin-bottom: 14px;
+}
+
+/* The editor's Z button opens the full navigation rail without leaving the editor. */
+.app-shell.editor-mode.editor-sidebar-expanded {
+  grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+  gap: 8px;
+  padding: 14px;
+}
+
+.app-shell.editor-mode.editor-sidebar-expanded .navigation-rail {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  width: 220px !important;
+  min-width: 220px !important;
+  height: calc(100vh - 28px);
+  gap: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  pointer-events: auto;
+}
+
+.app-shell.editor-mode.editor-sidebar-expanded .navigation-rail .floating-panel:first-child {
+  width: 220px;
+  min-width: 220px;
+  height: 52px;
+  padding: 10px 6px;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-start;
+  border-radius: var(--radius-panel);
+}
+
+.app-shell.editor-mode.editor-sidebar-expanded .navigation-rail .floating-panel:first-child > button {
+  display: flex;
+}
+
+.app-shell.editor-mode.editor-sidebar-expanded .navigation-rail .floating-panel:nth-child(2) {
+  bottom: 14px;
+  height: auto;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.app-shell.editor-mode.editor-sidebar-expanded .top-bar {
+  margin-left: 0;
+  width: 100%;
+}
+
+.app-shell.editor-mode.editor-sidebar-expanded .main-area {
+  grid-column: 2;
+  height: calc(100vh - 28px);
+}
+
+.editor-brand-name {
+  display: block;
+  max-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.45px;
+  line-height: 1;
+  transform: translateX(-8px);
+  transition: max-width var(--editor-motion), opacity var(--editor-motion), transform var(--editor-motion);
+  white-space: nowrap;
+}
+
+.app-shell.editor-mode.editor-sidebar-expanded .editor-brand-name {
+  max-width: 180px;
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.navigation-brand-panel {
+  position: relative;
+  width: 220px;
+  min-width: 220px;
+}
+
+.navigation-profile-state,
+.navigation-editor-state {
+  transition: opacity var(--editor-motion), transform var(--editor-motion), visibility var(--editor-motion);
+}
+
+.navigation-profile-state {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  transform: translateX(0);
+}
+
+.navigation-editor-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px;
+  cursor: pointer;
+  transform: translateX(10px);
+}
+
+.navigation-profile-state:not(.is-visible),
+.navigation-editor-state:not(.is-visible) {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.navigation-profile-state.is-visible,
+.navigation-editor-state.is-visible {
+  visibility: visible;
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+.editor-brand-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  border-radius: 14px;
+  background: var(--container);
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+.editor-expanded-profile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 5px 6px;
+  margin-bottom: 2px;
+  border-radius: 10px;
+  background: var(--container);
+  color: var(--text);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-8px);
+  transition: opacity var(--editor-motion), transform var(--editor-motion);
+}
+
+.editor-expanded-profile.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.editor-expanded-profile-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  border-radius: 12px;
+  background: var(--on-surface);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.editor-expanded-profile-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-expanded-profile-bell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  padding: 0;
+  border-radius: 10px;
+  background: var(--on-surface);
+  color: var(--text-secondary);
+}
+
+/* Keep the editor layout still while the full-workspace loader is covering it. */
+.app-shell.editor-entry-covered .editor-workspace,
+.app-shell.editor-entry-covered .editor-workspace .floating-panel {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* During editor entry, let the top bar begin its grid travel before the
+   profile-to-Z morph starts, keeping both edges synchronized. */
+.app-shell.editor-entry-covered .navigation-profile-state,
+.app-shell.editor-entry-covered .navigation-editor-state {
+  transition-delay: 220ms;
+}
+
+/* Keep editor mode as a single compact row on narrow screens; the dashboard
+   navigation rules should not re-expand or wrap over the editor. */
+@media (max-width: 640px) {
+  .app-shell.editor-mode .navigation-rail {
+    flex-direction: column !important;
+    overflow: visible !important;
+  }
+
+  .app-shell.editor-mode .navigation-rail .floating-panel:nth-child(2) {
+    display: none !important;
+  }
+
+  .app-shell.editor-mode .top-bar {
+    flex-wrap: nowrap;
+    height: 52px !important;
+    min-height: 52px;
+    padding: 0 8px !important;
+  }
+
+  .app-shell.editor-mode .top-bar > div:nth-child(2),
+  .app-shell.editor-mode .top-bar > div:nth-child(3),
+  .app-shell.editor-mode .top-bar > div:nth-child(4) {
+    order: initial;
+    flex-basis: auto;
+  }
+
+  .app-shell.editor-mode .top-bar > div:nth-child(3) {
+    margin-left: auto !important;
+  }
+
+  .app-shell.editor-mode .main-area {
+    grid-column: 1 / -1;
+  }
+
+  .app-shell.editor-mode .editor-workspace {
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: minmax(0, 1fr) !important;
+    overflow-y: auto;
+  }
+}

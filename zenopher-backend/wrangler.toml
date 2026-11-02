@@ -1,0 +1,43 @@
+name = "zenopher-api"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+# Same site as the web app (for example app.example.com and api.example.com): the refresh cookie is SameSite=Strict.
+# routes = [{ pattern = "api.example.com", custom_domain = true }]
+
+[triggers]
+# Every 10 minutes: queued jobs, expired tokens. 03:15 UTC daily: purge trash, orphans, learning aggregates.
+# Mondays 03:45 UTC: budget correction and the encrypted metadata export.
+crons = ["*/10 * * * *", "15 3 * * *", "45 3 * * 1"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "zenopher-v1"
+database_id = "66f1cc2a-1361-4620-941f-bb2598e361e1"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "zenopher-v1"
+
+[vars]
+APP_ORIGIN = "https://app.example.com"
+ALLOWED_ORIGINS = "https://app.example.com"
+EMAIL_API_URL = "https://api.resend.com/emails"
+EMAIL_FROM = "Zenopher <login@example.com>"
+GOOGLE_CLIENT_ID = ""
+TURNSTILE_REQUIRED = "true"
+CRITIQUE_ENABLED = "true"
+CRITIQUE_STARTING_CREDITS = "150"
+CRITIQUE_RESERVE_CREDITS = "10"
+CRITIQUE_COST_PER_REVIEW = "1"          # measure from 5 test calls (spec 9.1) and set
+CRITIQUE_DAILY_LIMIT = "2"
+MUSE_API_URL = ""                        # UNVERIFIED: set once the API is confirmed (spec 9.1)
+MUSE_MODEL = ""
+MUSE_ACCEPTS_IMAGES = "true"
+MAX_ASSET_BYTES = "10485760"
+MAX_VERSION_BYTES = "26214400"
+DELETION_GRACE_DAYS = "14"
+
+# Secrets (never in this file): wrangler secret put <NAME>
+#   ZPH_MASTER_KEY (base64 of 32 random bytes), MUSE_API_KEY, EMAIL_API_KEY, GOOGLE_CLIENT_SECRET, TURNSTILE_SECRET
