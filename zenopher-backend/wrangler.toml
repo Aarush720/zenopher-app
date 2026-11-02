@@ -21,8 +21,8 @@ binding = "BUCKET"
 bucket_name = "zenopher-v1"
 
 [vars]
-APP_ORIGIN = "https://app.example.com"
-ALLOWED_ORIGINS = "https://app.example.com"
+APP_ORIGIN = "https://zenopher-app.pages.dev"
+ALLOWED_ORIGINS = "https://zenopher-app.pages.dev"
 EMAIL_API_URL = "https://api.resend.com/emails"
 EMAIL_FROM = "Zenopher <login@example.com>"
 GOOGLE_CLIENT_ID = ""
