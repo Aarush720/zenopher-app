@@ -4,6 +4,7 @@ import { settings } from "../env";
 import { purgeDesign } from "../routes/designs";
 import { tar } from "../services/tar";
 import { now, toU8 } from "../util";
+import { deleteStoredObject, putStoredObject } from "../storage";
 
 interface Job { id: number; kind: string; user_id: string; attempts: number }
 class Permanent extends Error {}
@@ -69,7 +70,8 @@ export async function exportAccount(env: Env, job: Job): Promise<void> {
     const obj = await env.BUCKET.get(a.r2_key);
     if (obj) files.push({ name: `assets/${a.id}.${EXT[a.mime] ?? "bin"}`, data: new Uint8Array(await obj.arrayBuffer()) });
   }
-  await env.BUCKET.put(`exports/${uid}/${job.id}.tar`, tar(files));
+  const archive = tar(files);
+  await putStoredObject(env, `exports/${uid}/${job.id}.tar`, archive);
 }
 
 export async function deleteLearning(env: Env, userId: string): Promise<void> {
@@ -92,12 +94,12 @@ export async function deleteAccount(env: Env, userId: string): Promise<void> {
     if (!batch.results.length) break;
     for (const d of batch.results) await purgeDesign(env, d.id);
   }
-  const assets = (await db.prepare("SELECT r2_key FROM assets WHERE owner_id = ?1").bind(userId).all<{ r2_key: string }>()).results.map((a) => a.r2_key);
-  for (let i = 0; i < assets.length; i += 500) await env.BUCKET.delete(assets.slice(i, i + 500));
+  const assets = (await db.prepare("SELECT r2_key, byte_size FROM assets WHERE owner_id = ?1").bind(userId).all<{ r2_key: string; byte_size: number }>()).results;
+  for (const asset of assets) await deleteStoredObject(env, asset.r2_key, asset.byte_size);
   let cursor: string | undefined;
   do {
     const page = await env.BUCKET.list({ prefix: `exports/${userId}/`, cursor });
-    if (page.objects.length) await env.BUCKET.delete(page.objects.map((o) => o.key));
+    for (const object of page.objects) await deleteStoredObject(env, object.key, object.size);
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor);
   await deleteLearning(env, userId);

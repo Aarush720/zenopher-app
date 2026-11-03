@@ -50,7 +50,9 @@ for wasm in "$APP"/*_bg.wasm; do
 done
 [[ -n "$WASM" ]] || { echo "error: no .wasm in $APP" >&2; exit 1; }
 STEM="$(basename "$WASM" _bg.wasm)" # photocraft-web-<content hash>
-GLUE="$APP/$STEM.js"
+GLUE_NAME="$(sed -nE 's/.*from [\"'\"']\.\/(photocraft-web-[^\"'\"']+\.js)[\"'\"'].*/\1/p' "$APP/index.html" | head -n 1)"
+[[ -n "$GLUE_NAME" ]] || { echo "error: could not find the app's JS glue in $APP/index.html" >&2; exit 1; }
+GLUE="$APP/$GLUE_NAME"
 [[ -f "$GLUE" ]] || { echo "error: $GLUE missing" >&2; exit 1; }
 
 NAME="photocraft-web-$VERSION"
@@ -60,6 +62,11 @@ mkdir -p "$WORK/$NAME/app"
 cp -R "$BOOT/." "$WORK/$NAME/"
 # The boot module imports the app's glue by this name (it can't know Trunk's content hash).
 cp "$GLUE" "$WORK/$NAME/app/photocraft-web.js"
+# wasm-bindgen glue imports the generated eframe snippet modules relative to its
+# own location. Keep those modules beside the glue in the packaged app.
+if [[ -d "$APP/snippets" ]]; then
+  cp -R "$APP/snippets" "$WORK/$NAME/app/"
+fi
 # The parts keep the content hash, so they can be cached forever. Their extension is one no
 # server knows: a server that recognised gzip might decode it or label it, and the page inflates
 # the parts itself.
@@ -95,6 +102,9 @@ if [[ -n "${PHOTOCRAFT_WEB_FONTS_DIR:-}" ]]; then
   done
   echo "served fonts: $(grep -cvE '^[[:space:]]*(#|$)' "$FONTS_MANIFEST") manifest lines from $PHOTOCRAFT_WEB_FONTS_DIR"
 fi
+# macOS can create AppleDouble sidecars while copying files on an external volume;
+# they are filesystem metadata, never site assets.
+find "$WORK/$NAME" -name '._*' -delete
 largest=0
 while IFS= read -r file; do
   bytes=$(size "$file")

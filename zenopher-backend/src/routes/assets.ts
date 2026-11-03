@@ -4,6 +4,7 @@ import { rateLimit } from "../db";
 import { ApiError, notFound, unauthorized } from "../errors";
 import { settings } from "../env";
 import { ASSET_TYPES, declaredType, sniff, userFileHeaders, type AssetType } from "../services/upload";
+import { deleteStoredObject, putStoredObject } from "../storage";
 import { now, randomId, sha256Hex } from "../util";
 
 const USER_QUOTA_BYTES = 200 * 1024 * 1024;
@@ -41,7 +42,7 @@ export function assetRoutes(app: Hono<AppEnv>) {
     if ((used?.n ?? 0) + body.length > USER_QUOTA_BYTES) throw new ApiError(413, "quota_exceeded", "You have reached your storage limit.");
     const id = randomId(), key = `a/${id}`, t = now();
     await c.env.DB.prepare("INSERT INTO assets (id, owner_id, r2_key, mime, byte_size, status, created_at) VALUES (?1,?2,?3,?4,?5,'pending',?6)").bind(id, u.id, key, type, body.length, t).run();
-    await c.env.BUCKET.put(key, body, { httpMetadata: { contentType: type } });
+    await putStoredObject(c.env, key, body, { httpMetadata: { contentType: type } });
     await c.env.DB.prepare("UPDATE assets SET status = 'ready' WHERE id = ?1").bind(id).run();
     return c.json({ id, mime: type, byte_size: body.length }, 201);
   });
@@ -59,9 +60,9 @@ export function assetRoutes(app: Hono<AppEnv>) {
   app.delete("/v1/assets/:id", async (c) => {
     route(c, "DELETE /v1/assets/:id");
     const u = await authenticate(c); mustBeActive(u);
-    const a = await c.env.DB.prepare("SELECT r2_key FROM assets WHERE id = ?1 AND owner_id = ?2").bind(c.req.param("id"), u.id).first<{ r2_key: string }>();
+    const a = await c.env.DB.prepare("SELECT r2_key, byte_size FROM assets WHERE id = ?1 AND owner_id = ?2").bind(c.req.param("id"), u.id).first<{ r2_key: string; byte_size: number }>();
     if (!a) throw notFound();
-    await c.env.BUCKET.delete(a.r2_key);
+    await deleteStoredObject(c.env, a.r2_key, a.byte_size);
     await c.env.DB.prepare("DELETE FROM assets WHERE id = ?1 AND owner_id = ?2").bind(c.req.param("id"), u.id).run();
     return new Response(null, { status: 204 });
   });

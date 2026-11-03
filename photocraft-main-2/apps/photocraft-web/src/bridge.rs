@@ -28,6 +28,7 @@ const PROTOCOL_VERSION: u64 = 1;
 pub enum Request {
     Open { request_id: String, design: Value },
     Save { request_id: String },
+    Sync { request_id: String },
 }
 
 #[derive(Clone)]
@@ -60,6 +61,7 @@ impl Bridge {
             let request = match kind {
                 "zenopher:open-design" => message.get("design").cloned().map(|design| Request::Open { request_id, design }),
                 "zenopher:save" => Some(Request::Save { request_id }),
+                "zenopher:sync" => Some(Request::Sync { request_id }),
                 _ => None,
             };
             if let Some(request) = request {
@@ -137,6 +139,17 @@ impl Bridge {
         self.post_js(object.into());
     }
 
+    pub fn send_changed(&self, request_id: &str, design: &Value, warnings: &[String]) {
+        self.post_json(json!({
+            "source": PHOTOCRAFT_SOURCE,
+            "type": "photocraft:changed",
+            "protocol": PROTOCOL_VERSION,
+            "requestId": request_id,
+            "design": design,
+            "warnings": warnings,
+        }));
+    }
+
     fn post_json(&self, value: Value) {
         let Ok(value) = JSON::parse(&value.to_string()) else { return };
         self.post_js(value);
@@ -186,7 +199,37 @@ pub fn process(app: &mut PhotocraftApp, bridge: &Bridge, request: Request) {
                 Err(error) => bridge.send_error(&request_id, &error.to_string()),
             }
         }
+        Request::Sync { request_id } => {
+            let Some(document) = app.session.active().map(|state| state.doc.clone()) else {
+                return;
+            };
+            let Some(base) = bridge.current_design.borrow().clone() else {
+                return;
+            };
+            let mut warnings = Vec::new();
+            let synced_design = native_design(&document, base, &mut warnings);
+            let changed = bridge.current_design.borrow().as_ref().is_none_or(|current| !same_design_content(current, &synced_design));
+            if changed {
+                *bridge.current_design.borrow_mut() = Some(synced_design.clone());
+                bridge.send_changed(&request_id, &synced_design, &warnings);
+            }
+        }
     }
+}
+
+/// `updatedAt` is intentionally refreshed when a document is read back from PhotoCraft, but it
+/// must not make every host sync look like a user edit. Comparing the remaining fields keeps
+/// autosave quiet when the document is idle.
+fn same_design_content(left: &Value, right: &Value) -> bool {
+    let mut left = left.clone();
+    let mut right = right.clone();
+    if let Some(object) = left.as_object_mut() {
+        object.remove("updatedAt");
+    }
+    if let Some(object) = right.as_object_mut() {
+        object.remove("updatedAt");
+    }
+    left == right
 }
 
 fn open_design(app: &mut PhotocraftApp, design: &Value) -> Result<(Option<String>, usize, Vec<String>), String> {

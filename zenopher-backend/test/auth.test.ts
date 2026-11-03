@@ -36,6 +36,13 @@ describe("sign-in", () => {
     expect((await call(h, "POST", "/v1/auth/magic", { json: { email: "c@test.dev", turnstile_token: "good-token" } })).status).toBe(202);
   });
 
+  it("does not claim a link was sent when email delivery is unavailable", async () => {
+    const h = makeEnv({ EMAIL_API_KEY: undefined });
+    const r = await call(h, "POST", "/v1/auth/magic", { json: { email: "mail-down@test.dev" } });
+    expect(r.status).toBe(503);
+    expect(r.json.error.code).toBe("email_unavailable");
+  });
+
   it("rate limits magic links per email", async () => {
     const h = makeEnv();
     for (let i = 0; i < 5; i++) expect((await call(h, "POST", "/v1/auth/magic", { json: { email: "spam@test.dev" } })).status).toBe(202);

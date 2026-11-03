@@ -148,6 +148,7 @@ impl Teacher {
         self.level = level;
         self.run = None;
         self.passes = 0;
+        self.last_plan = None;
         if level == Level::Creative {
             let d = self.store.clear();
             self.emit(&d);
@@ -161,6 +162,7 @@ impl Teacher {
         self.style = style;
         self.run = None;
         self.passes = 0;
+        self.last_plan = None;
         if self.level != Level::Creative {
             self.sched.force();
         }
@@ -173,8 +175,11 @@ impl Teacher {
     // --- inputs from the document core ---
 
     /// The document core recorded a command. Changes abandon any run in flight.
+    /// They also invalidate any pending Apply-all plan: the design changed
+    /// since the summary was shown, so committing it must fail as stale.
     pub fn on_change(&mut self, layers: &[LayerId], page_changed: bool, now: u64) {
         self.run = None;
+        self.last_plan = None;
         self.sched.on_change(layers, page_changed, now);
     }
     pub fn gesture_start(&mut self) {
@@ -225,7 +230,6 @@ impl Teacher {
             return None;
         }
         // Finished.
-        let _ = eff;
         let versions = snap.layer_versions();
         self.bg
             .borrow_mut()

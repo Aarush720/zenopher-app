@@ -6,3 +6,4 @@ export const notFound = () => new ApiError(404, "not_found", "Not found.");
 export const unauthorized = () => new ApiError(401, "unauthorized", "Please sign in.");
 export const badRequest = (code: string, message: string) => new ApiError(400, code, message);
 export const tooMany = (retryAfter: number) => new ApiError(429, "rate_limited", "Too many requests. Try again later.", { retry_after: retryAfter });
+export const storageFull = () => new ApiError(507, "storage_full", "Cloud storage is full. Delete older content before uploading or saving more files.");

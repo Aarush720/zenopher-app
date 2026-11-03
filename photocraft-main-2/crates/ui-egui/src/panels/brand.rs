@@ -52,13 +52,7 @@ pub fn paint_zenopher_mark(ui: &Ui, r: Rect) {
     let t = theme::Tokens::get(ui.ctx());
     let radius = (r.width() * 0.28).round();
     ui.painter().rect_filled(r, radius, t.primary_bg);
-    ui.painter().text(
-        r.center() + egui::vec2(0.0, 0.5),
-        egui::Align2::CENTER_CENTER,
-        "Z",
-        theme::semibold((r.width() * 0.62).max(11.0)),
-        t.primary_text,
-    );
+    ui.painter().text(r.center() + egui::vec2(0.0, 0.5), egui::Align2::CENTER_CENTER, "Z", theme::semibold((r.width() * 0.62).max(11.0)), t.primary_text);
 }
 
 /// The rect the mark was last painted into.

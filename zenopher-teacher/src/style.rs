@@ -85,12 +85,64 @@ fn fail<T>(detail: impl Into<String>) -> Result<T, StyleError> {
 const ALLOWED_LICENCES: &[&str] = &["CC0-1.0", "CC-BY-4.0", "CC-BY-SA-4.0", "PDM-1.0"];
 
 /// The hash covers the profile as canonical JSON (keys sorted, no whitespace) without `content_hash` itself.
+/// Canonical form matches `scripts/build-catalog.mjs`: objects sorted by key at every level,
+/// arrays in order, numbers in shortest round-trip form (integer-valued floats as integers).
 pub fn compute_hash(value: &serde_json::Value) -> String {
     let mut v = value.clone();
     if let Some(o) = v.as_object_mut() {
         o.remove("content_hash");
     }
-    sha256_hex(serde_json::to_string(&v).unwrap_or_default().as_bytes())
+    sha256_hex(canonical_string(&v).as_bytes())
+}
+
+fn canonical_string(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::Null => "null".into(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Number(n) => canonical_number(n),
+        serde_json::Value::String(s) => serde_json::to_string(s).unwrap_or_default(),
+        serde_json::Value::Array(a) => {
+            let mut out = String::from("[");
+            for (i, x) in a.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&canonical_string(x));
+            }
+            out.push(']');
+            out
+        }
+        serde_json::Value::Object(m) => {
+            let mut keys: Vec<&String> = m.keys().collect();
+            keys.sort();
+            let mut out = String::from("{");
+            for (i, k) in keys.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&serde_json::to_string(k).unwrap_or_default());
+                out.push(':');
+                out.push_str(&canonical_string(&m[*k]));
+            }
+            out.push('}');
+            out
+        }
+    }
+}
+
+fn canonical_number(n: &serde_json::Number) -> String {
+    if let Some(u) = n.as_u64() {
+        return u.to_string();
+    }
+    if let Some(i) = n.as_i64() {
+        return i.to_string();
+    }
+    let f = n.as_f64().unwrap_or(0.0);
+    if f.is_finite() && f.fract() == 0.0 && f >= -9e15 && f <= 9e15 {
+        return (f as i64).to_string();
+    }
+    // Shortest round-trip, like JS JSON.stringify (serde_json already uses ryu/grisu).
+    serde_json::to_string(n).unwrap_or_else(|_| "0".into())
 }
 
 /// Validation order follows section 14.2 of the spec.
@@ -104,6 +156,19 @@ pub fn validate_and_compile(json: &str) -> Result<CompiledStyle, StyleError> {
     for id in p.patterns.keys().chain(p.professional.keys()) {
         if !crate::measure::is_registered(id) {
             return fail(format!("unknown measurement {id}"));
+        }
+    }
+    // 2b. Targets and tolerances must be finite numbers; NaN/inf would poison every comparison.
+    for (id, s) in p.patterns.iter().chain(p.professional.iter()) {
+        for (n, v) in [("lo", s.target[0]), ("hi", s.target[1]), ("tolerance", s.tolerance), ("weight", s.weight)] {
+            if !v.is_finite() {
+                return fail(format!("{id}: {n} must be a finite number"));
+            }
+        }
+    }
+    for (k, v) in &p.overrides {
+        if !v.is_finite() {
+            return fail(format!("override {k} must be a finite number"));
         }
     }
     for k in p.overrides.keys() {

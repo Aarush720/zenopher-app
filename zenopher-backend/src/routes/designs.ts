@@ -6,6 +6,7 @@ import { idempotent, rateLimit } from "../db";
 import { ApiError, badRequest, notFound } from "../errors";
 import { settings } from "../env";
 import { pngSize, sniff } from "../services/upload";
+import { deleteStoredObject, putStoredObject } from "../storage";
 import { now, randomId, sha256Hex, toU8, UUID_RE } from "../util";
 
 const STYLE_REF = /^[a-z0-9-]{1,40}@\d{1,4}$/;
@@ -157,7 +158,7 @@ export function designRoutes(app: Hono<AppEnv>) {
       const dek = await unwrapDek(c.env, d.id, toU8(d.wrapped_dek));
       const sealed = await encryptBlob(dek, d.id, next, body);
       const key = `v/${d.id}/${next}-${randomId()}`; // server-generated, never from user input
-      await c.env.BUCKET.put(key, sealed);
+      await putStoredObject(c.env, key, sealed);
       const t = now();
       // One batch: the version row is inserted only if the pointer actually moved (changes() = 1).
       const [moved] = await c.env.DB.batch([
@@ -165,7 +166,7 @@ export function designRoutes(app: Hono<AppEnv>) {
         c.env.DB.prepare("INSERT INTO design_versions (design_id, version, r2_key, byte_size, content_hash, created_at) SELECT ?1, ?2, ?3, ?4, ?5, ?6 WHERE changes() = 1").bind(d.id, next, key, sealed.length, claimedHash, t),
       ]);
       if (moved!.meta.changes !== 1) {
-        await c.env.BUCKET.delete(key);
+        await deleteStoredObject(c.env, key, sealed.length);
         const cur = await c.env.DB.prepare("SELECT current_version FROM designs WHERE id = ?1").bind(d.id).first<{ current_version: number }>();
         return { status: 409, body: { error: { code: "version_conflict", message: "The design changed elsewhere.", current_version: cur?.current_version ?? null } } };
       }
@@ -200,7 +201,7 @@ export function designRoutes(app: Hono<AppEnv>) {
     const d = await ownedDesign(c, u.id);
     const body = await rawBody(c, settings(c.env).maxThumbnailBytes);
     if (!pngSize(body)) throw badRequest("bad_thumbnail", "The thumbnail must be a PNG.");
-    await c.env.BUCKET.put(`t/${d.id}`, body, { httpMetadata: { contentType: "image/png" } });
+    await putStoredObject(c.env, `t/${d.id}`, body, { httpMetadata: { contentType: "image/png" } });
     return new Response(null, { status: 204 });
   });
 
@@ -217,9 +218,9 @@ export function designRoutes(app: Hono<AppEnv>) {
 
 /** Removes a design, its versions, its shares, and every R2 object. Used by permanent delete and the trash purge. */
 export async function purgeDesign(env: import("../env").Env, designId: string): Promise<void> {
-  const keys = (await env.DB.prepare("SELECT r2_key FROM design_versions WHERE design_id = ?1").bind(designId).all<{ r2_key: string }>()).results.map((r) => r.r2_key);
-  for (let i = 0; i < keys.length; i += 500) await env.BUCKET.delete(keys.slice(i, i + 500));
-  await env.BUCKET.delete(`t/${designId}`);
+  const versions = (await env.DB.prepare("SELECT r2_key, byte_size FROM design_versions WHERE design_id = ?1").bind(designId).all<{ r2_key: string; byte_size: number }>()).results;
+  for (const version of versions) await deleteStoredObject(env, version.r2_key, version.byte_size);
+  await deleteStoredObject(env, `t/${designId}`);
   await env.DB.batch([
     env.DB.prepare("DELETE FROM share_grants WHERE design_id = ?1").bind(designId),
     env.DB.prepare("DELETE FROM design_versions WHERE design_id = ?1").bind(designId),

@@ -22,6 +22,8 @@ export interface Env {
   MUSE_API_URL?: string;
   MUSE_MODEL?: string;
   MUSE_ACCEPTS_IMAGES?: string;
+  R2_HARD_LIMIT_BYTES?: string;
+  R2_RESERVED_BYTES?: string;
   MAX_ASSET_BYTES?: string;
   MAX_VERSION_BYTES?: string;
   DELETION_GRACE_DAYS?: string;
@@ -42,6 +44,8 @@ export function settings(env: Env) {
     costPerReview: num(env.CRITIQUE_COST_PER_REVIEW, 1),
     critiqueDailyLimit: num(env.CRITIQUE_DAILY_LIMIT, 2),
     museAcceptsImages: env.MUSE_ACCEPTS_IMAGES !== "false",
+    r2HardLimitBytes: num(env.R2_HARD_LIMIT_BYTES, 8 * 1024 * 1024 * 1024),
+    r2ReservedBytes: num(env.R2_RESERVED_BYTES, 0),
     maxAssetBytes: num(env.MAX_ASSET_BYTES, 10 * 1024 * 1024),
     maxVersionBytes: num(env.MAX_VERSION_BYTES, 25 * 1024 * 1024),
     maxThumbnailBytes: 512 * 1024,

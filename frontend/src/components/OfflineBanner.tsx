@@ -3,9 +3,10 @@ import { CloudOff, WifiOff } from 'lucide-react';
 
 interface OfflineBannerProps {
   backendStatus?: 'disabled' | 'checking' | 'online' | 'offline';
+  storageFull?: boolean;
 }
 
-export const OfflineBanner: React.FC<OfflineBannerProps> = ({ backendStatus = 'disabled' }) => {
+export const OfflineBanner: React.FC<OfflineBannerProps> = ({ backendStatus = 'disabled', storageFull = false }) => {
   const [isOffline, setIsOffline] = useState<boolean>(!navigator.onLine);
 
   useEffect(() => {
@@ -22,7 +23,7 @@ export const OfflineBanner: React.FC<OfflineBannerProps> = ({ backendStatus = 'd
   }, []);
 
   const showBackendNotice = backendStatus === 'offline' && !isOffline;
-  if (!isOffline && !showBackendNotice) return null;
+  if (!isOffline && !showBackendNotice && !storageFull) return null;
 
   return (
     <div
@@ -46,8 +47,14 @@ export const OfflineBanner: React.FC<OfflineBannerProps> = ({ backendStatus = 'd
       }}
       role="status"
     >
-      {isOffline ? <WifiOff size={16} color="var(--text-secondary)" /> : <CloudOff size={16} color="var(--text-secondary)" />}
-      <span>{isOffline ? 'You’re offline. Your designs are still being saved on this device.' : 'The cloud backend is unavailable. Your designs are still being saved on this device.'}</span>
+      {isOffline || showBackendNotice ? <WifiOff size={16} color="var(--text-secondary)" /> : <CloudOff size={16} color="var(--text-secondary)" />}
+      <span>
+        {isOffline
+          ? 'You’re offline. Your designs are still being saved on this device.'
+          : storageFull
+            ? 'Cloud storage has reached its safety limit. Cloud uploads and saves are paused; delete older cloud content to continue.'
+            : 'The cloud backend is unavailable. Your designs are still being saved on this device.'}
+      </span>
     </div>
   );
 };

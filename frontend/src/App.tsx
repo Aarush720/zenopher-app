@@ -13,9 +13,6 @@ import { LegalView } from './views/LegalView';
 import { HelpView } from './views/HelpView';
 import { SharedDesignView } from './views/SharedDesignView';
 
-import { FloatingLayersPanel } from './components/editor/FloatingLayersPanel';
-import { FloatingCanvasWorkspace } from './components/editor/FloatingCanvasWorkspace';
-import { FloatingPropertiesPanel } from './components/editor/FloatingPropertiesPanel';
 import { PhotoCraftWasmWorkspace } from './components/editor/PhotoCraftWasmWorkspace';
 
 import { NewDesignModal } from './components/NewDesignModal';
@@ -37,14 +34,15 @@ import {
   Layer, 
   LayerType, 
   DesignMode, 
-  Unit 
+  Unit,
+  ReviewFinding,
 } from './types';
 import { storage, DEFAULT_SETTINGS } from './services/storage';
 import { STYLE_PROFILES } from './data/styles';
 import { api, ApiAccount, ApiConfig, ApiUser, BackendUnavailableError } from './services/api';
 import { pullRemoteDesigns, syncDesign } from './services/sync';
 import { renderDesignToPng } from './services/render';
-import { runDesignReview, applyFixToDesign, applyAllFixesToDesign } from './services/reviewEngine';
+import { useRustTeacher } from './teacher/useRustTeacher';
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -362,19 +360,6 @@ export const App: React.FC = () => {
     return api.requestCritique(image, metadata);
   };
 
-  const sendLearningOutcome = (finding: { id: string; confidence: 'must' | 'optional' }, outcome: 'applied' | 'dismissed' | 'undone') => {
-    if (!sessionUser || !api.authenticated || !settings.learningDataConsent || !activeDesign) return;
-    const rule = (finding.id.replace(/[^a-z0-9_.]/gi, '_').toLowerCase() || 'finding').slice(0, 40);
-    void api.sendLearningEvents([{
-      rule,
-      class: finding.confidence === 'must' ? 'base' : 'pattern',
-      outcome,
-      mode: activeDesign.styleId ? 'corporate_full' : 'corporate_base',
-      style_id: activeDesign.styleId ?? null,
-      occurred_at: Date.now(),
-    }]).catch((error) => console.warn('Could not send learning outcome:', error));
-  };
-
   const cloudReviewAvailable = Boolean(
     sessionUser
     && api.authenticated
@@ -426,21 +411,9 @@ export const App: React.FC = () => {
     unit: Unit;
     mode: DesignMode;
     styleId?: string;
+    layers?: Layer[];
   }) => {
-    const newDesign: Design = {
-      id: 'design-' + Math.random().toString(36).substring(2, 9),
-      title: data.title || 'Untitled Design',
-      width: data.width,
-      height: data.height,
-      unit: data.unit,
-      mode: data.mode,
-      styleId: data.styleId,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      isSaved: true,
-      isDeleted: false,
-      background: '#111111',
-      layers: [
+    const fallbackLayers: Layer[] = [
         {
           id: 'layer-heading',
           name: 'Primary Title',
@@ -479,7 +452,49 @@ export const App: React.FC = () => {
           fontWeight: '400',
           textAlign: 'left',
         },
-      ],
+      ];
+    const templateLayers = (data.layers ?? [])
+      .filter((l) => l && typeof l.id === 'string' && typeof l.type === 'string')
+      .map((l, i) => ({
+        id: typeof l.id === 'string' && l.id ? l.id : `layer-template-${i}`,
+        name: (l as Layer).name || `Layer ${i + 1}`,
+        type: (l as Layer).type,
+        x: Number((l as Layer).x) || 0,
+        y: Number((l as Layer).y) || 0,
+        width: Math.max(1, Number((l as Layer).width) || 100),
+        height: Math.max(1, Number((l as Layer).height) || 100),
+        rotation: Number((l as Layer).rotation) || 0,
+        visible: (l as Layer).visible !== false,
+        locked: Boolean((l as Layer).locked),
+        opacity: Number.isFinite(Number((l as Layer).opacity)) ? Number((l as Layer).opacity) : 1,
+        fill: (l as Layer).fill ?? '#FFFFFF',
+        stroke: (l as Layer).stroke,
+        strokeWidth: (l as Layer).strokeWidth,
+        borderRadius: (l as Layer).borderRadius,
+        text: (l as Layer).text,
+        fontSize: (l as Layer).fontSize,
+        fontFamily: (l as Layer).fontFamily ?? 'Lufga',
+        fontWeight: (l as Layer).fontWeight,
+        textAlign: (l as Layer).textAlign,
+        letterSpacing: (l as Layer).letterSpacing,
+        lineHeight: (l as Layer).lineHeight,
+        imageUrl: (l as Layer).imageUrl,
+        assetId: (l as Layer).assetId,
+      } as Layer));
+    const newDesign: Design = {
+      id: 'design-' + Math.random().toString(36).substring(2, 9),
+      title: data.title || 'Untitled Design',
+      width: data.width,
+      height: data.height,
+      unit: data.unit,
+      mode: data.mode,
+      styleId: data.styleId,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      isSaved: true,
+      isDeleted: false,
+      background: '#111111',
+      layers: templateLayers.length > 0 ? templateLayers : fallbackLayers,
     };
 
     await storage.saveDesign(newDesign);
@@ -758,21 +773,22 @@ export const App: React.FC = () => {
     }
   };
 
-  // Corporate Mode Review Calculations
-  const findings = activeDesign ? runDesignReview(activeDesign) : [];
+  // Corporate review is powered by the Rust teacher in zenopher-teacher.
+  const teacher = useRustTeacher(
+    activeDesign,
+    api.baseUrl,
+    settings.learningDataConsent,
+    handleUpdateActiveDesign,
+    (ids) => setSelectedLayerId(ids[0] ?? null),
+  );
+  const findings = teacher.findings;
 
-  const handleApplyFix = (finding: any) => {
-    if (!activeDesign) return;
-    const updated = applyFixToDesign(activeDesign, finding);
-    handleUpdateActiveDesign(updated);
-    sendLearningOutcome(finding, 'applied');
+  const handleApplyFix = (finding: ReviewFinding) => {
+    void teacher.applyFix(finding);
   };
 
   const handleApplyAllFixes = () => {
-    if (!activeDesign) return;
-    const updated = applyAllFixesToDesign(activeDesign, findings);
-    handleUpdateActiveDesign(updated);
-    findings.filter((finding) => finding.isFixable && finding.confidence === 'must').forEach((finding) => sendLearningOutcome(finding, 'applied'));
+    void teacher.applyAllFixes();
   };
 
   // Context Title calculation
@@ -879,50 +895,13 @@ export const App: React.FC = () => {
 
         {/* Workspace Display Area */}
         {currentDestination === 'editor' && activeDesign ? (
-          <div className={`editor-workspace${activeDesign.mode === 'creative' ? ' creative-mode-workspace' : ''}`}>
-            {activeDesign.mode === 'creative' ? (
-              <PhotoCraftWasmWorkspace
-                design={activeDesign}
-                onCanvasReady={handleCanvasReady}
-                onDesignChange={(updates) => handleUpdateActiveDesign(updates)}
-              />
-            ) : (
-              <>
-                {/* 1. Floating Layers Panel */}
-                <FloatingLayersPanel
-                  layers={activeDesign.layers}
-                  selectedLayerId={selectedLayerId}
-                  onSelectLayer={setSelectedLayerId}
-                  onUpdateLayer={handleUpdateLayer}
-                  onAddLayer={handleAddLayer}
-                  onDeleteLayer={handleDeleteLayer}
-                  onReorderLayer={handleReorderLayer}
-                />
-
-                {/* 2. Floating Canvas Workspace */}
-                <FloatingCanvasWorkspace
-                  design={activeDesign}
-                  selectedLayerId={selectedLayerId}
-                  onSelectLayer={setSelectedLayerId}
-                  onUpdateLayer={handleUpdateLayer}
-                  onCanvasReady={handleCanvasReady}
-                />
-
-                {/* 3. Floating Properties Panel (with Review in Corporate mode) */}
-                <FloatingPropertiesPanel
-                  design={activeDesign}
-                  selectedLayer={selectedLayer}
-                  onUpdateLayer={handleUpdateLayer}
-                  onUpdateDesign={handleUpdateActiveDesign}
-                  findings={findings}
-                  onApplyFix={handleApplyFix}
-                  onApplyAllFixes={handleApplyAllFixes}
-                  onOpenStylePicker={() => setStylePickerOpen(true)}
-                  onRequestCloudCritique={handleRequestCloudCritique}
-                  cloudReviewAvailable={cloudReviewAvailable}
-                />
-              </>
-            )}
+          <div className={`editor-workspace photocraft-editor-workspace${activeDesign.mode === 'creative' ? ' creative-mode-workspace' : ' corporate-mode-workspace'}`}>
+            <PhotoCraftWasmWorkspace
+              design={activeDesign}
+              toolProfile={activeDesign.mode}
+              onCanvasReady={handleCanvasReady}
+              onDesignChange={(updates) => handleUpdateActiveDesign(updates)}
+            />
           </div>
         ) : currentDestination === 'home' ? (
           <HomeView
@@ -976,6 +955,7 @@ export const App: React.FC = () => {
                 unit: 'px',
                 mode: t.mode,
                 styleId: t.styleId,
+                layers: t.layers as Layer[],
               });
             }}
           />
@@ -1149,7 +1129,7 @@ export const App: React.FC = () => {
       )}
 
       {/* Plain text Offline Status Banner */}
-      <OfflineBanner backendStatus={backendStatus} />
+      <OfflineBanner backendStatus={backendStatus} storageFull={backendConfig?.features.storage_available === false} />
     </div>
   );
 };

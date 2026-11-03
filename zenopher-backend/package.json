@@ -8,8 +8,8 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "migrate:local": "wrangler d1 migrations apply zenopher --local",
-    "migrate:remote": "wrangler d1 migrations apply zenopher --remote",
+    "migrate:local": "wrangler d1 migrations apply zenopher-v1 --local",
+    "migrate:remote": "wrangler d1 migrations apply zenopher-v1 --remote",
     "build:check": "wrangler deploy --dry-run --outdir dist"
   },
   "dependencies": {

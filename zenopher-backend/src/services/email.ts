@@ -2,7 +2,7 @@ import { outbound, type Env } from "../env";
 
 /** Sends the sign-in email through an HTTP email API (Resend-style JSON). Failures are logged without the address or link. */
 export async function sendMagicLink(env: Env, to: string, link: string): Promise<boolean> {
-  if (!env.EMAIL_API_URL || !env.EMAIL_API_KEY) return false;
+  if (!env.EMAIL_API_URL || !env.EMAIL_API_KEY || !env.EMAIL_FROM) return false;
   try {
     const res = await outbound(env)(env.EMAIL_API_URL, {
       method: "POST",

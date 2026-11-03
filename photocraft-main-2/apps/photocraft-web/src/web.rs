@@ -11,7 +11,8 @@ use photocraft_doc::Document;
 use photocraft_ui_egui::i18n;
 use photocraft_ui_egui::served_fonts;
 use photocraft_ui_egui::theme::ThemeKind;
-use photocraft_ui_egui::{FileDialogAnswer, FileDialogRequest, PhotocraftApp, Services};
+use photocraft_ui_egui::{FileDialogAnswer, FileDialogRequest, PhotocraftApp, Services, Tool};
+use serde_json::json;
 use wasm_bindgen::JsCast as _;
 
 type Inbox = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
@@ -58,6 +59,7 @@ pub fn start() {
         };
         let q = query();
         let force_cpu = q.contains("cpu");
+        let corporate_mode = query_param(&q, "zenopherMode").as_deref() == Some("corporate");
         let mut options = eframe::WebOptions::default();
         photocraft_ui_egui::gpu_canvas::use_adapter_limits(&mut options.wgpu_options.wgpu_setup);
         if q.contains("webgl")
@@ -95,6 +97,7 @@ pub fn start() {
                     preset_warnings.extend(warnings);
                     let drag = listen_drag(&pen_target);
                     let mut app = PhotocraftApp::new(session, services(inbox.clone(), place_inbox.clone(), drag_pos_service(pen_target.clone(), drag)));
+                    configure_hosted_profile(&mut app, corporate_mode);
                     if !preset_warnings.is_empty() {
                         photocraft_ui_egui::notices::post(&mut app, i18n::t("Some brush presets could not be loaded"), preset_warnings, true, None);
                     }
@@ -116,7 +119,9 @@ pub fn start() {
         if let Some(el) = document.get_element_by_id("photocraft_loading") {
             match result {
                 Ok(()) => el.remove(),
-                Err(e) => el.set_inner_html(&format!("<p>Zenopher Creative Workspace failed to start: {e:?}</p><p>A browser with WebGPU or WebGL2 is required.</p>")),
+                Err(e) => {
+                    el.set_inner_html(&format!("<p>Zenopher Creative Workspace failed to start: {e:?}</p><p>A browser with WebGPU or WebGL2 is required.</p>"))
+                }
             }
         }
     });
@@ -204,6 +209,50 @@ fn guard_unload(unsaved: Arc<AtomicBool>) {
 
 fn query() -> String {
     web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default()
+}
+
+fn query_param(search: &str, key: &str) -> Option<String> {
+    search
+        .trim_start_matches('?')
+        .split('&')
+        .filter_map(|part| part.split_once('='))
+        .find(|(name, _)| *name == key)
+        .and_then(|(_, value)| js_sys::decode_uri_component(value).ok().and_then(|value| value.as_string()))
+}
+
+/// Corporate mode is the same PhotoCraft engine with a smaller, creation-first toolbar. The
+/// allow-list keeps the editor approachable for brand work while leaving the full tool surface
+/// available to Creative mode.
+fn configure_hosted_profile(app: &mut PhotocraftApp, corporate: bool) {
+    if !corporate {
+        return;
+    }
+
+    let allowed = [
+        Tool::Move,
+        Tool::Crop,
+        Tool::Eyedropper,
+        Tool::Brush,
+        Tool::Eraser,
+        Tool::Gradient,
+        Tool::Type,
+        Tool::Hand,
+        Tool::Zoom,
+        Tool::Rectangle,
+        Tool::EllipseShape,
+        Tool::Triangle,
+        Tool::Line,
+        Tool::Frame,
+    ];
+    let hidden: Vec<String> = Tool::ALL.iter().copied().filter(|tool| !allowed.contains(tool)).map(|tool| format!("{tool:?}")).collect();
+    if let Err(error) = app.run("edit.toolbar", json!({"hidden": hidden})) {
+        log::warn!("could not configure the corporate toolbar: {error}");
+    }
+
+    // Keep the compact Zenopher shell: the toolbar and canvas stay visible, while the secondary
+    // icon rail is removed so the useful PhotoCraft panels have more room.
+    app.ui.panels.rail = false;
+    app.ui.panels.toolbar_double = false;
 }
 
 /// Reads the served font manifest, if the host has one, and lists its families in the font menus.

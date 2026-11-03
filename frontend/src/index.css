@@ -229,6 +229,29 @@ body {
   background: transparent;
 }
 
+/* Both modes use the same PhotoCraft engine. Corporate mode changes the Rust toolbar profile,
+   not the canvas implementation, so there is never a second React editor to drift out of sync. */
+.photocraft-editor-workspace {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  gap: 0;
+  background: transparent;
+}
+
+.photocraft-editor-workspace > .photocraft-wasm-workspace {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  border-radius: var(--radius-panel);
+  background: var(--on-surface);
+  overflow: hidden;
+}
+
+.photocraft-editor-workspace .photocraft-wasm-frame {
+  border-radius: var(--radius-panel);
+}
+
 .creative-tools-panel {
   display: flex;
   flex-direction: column;
@@ -1519,6 +1542,13 @@ input::placeholder, textarea::placeholder {
   color: rgba(255, 255, 255, 0.7);
   font-size: 12px;
   pointer-events: none;
+}
+
+.photocraft-wasm-loading.is-error {
+  padding: 24px;
+  color: #ffb4b4;
+  text-align: center;
+  line-height: 1.5;
 }
 
 .photocraft-wasm-loading-icon {

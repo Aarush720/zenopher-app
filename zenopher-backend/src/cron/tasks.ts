@@ -3,6 +3,7 @@ import type { Env } from "../env";
 import { settings } from "../env";
 import { purgeDesign } from "../routes/designs";
 import { settle } from "../services/budget";
+import { deleteStoredObject, putStoredObject } from "../storage";
 import { now, toHex } from "../util";
 import { processJobs } from "./jobs";
 
@@ -45,8 +46,8 @@ export async function expire(env: Env): Promise<void> {
   let cursor: string | undefined;
   do {
     const page = await env.BUCKET.list({ prefix: "exports/", cursor, limit: 200 });
-    const old = page.objects.filter((o) => o.uploaded.getTime() < cutoff).map((o) => o.key);
-    if (old.length) await env.BUCKET.delete(old);
+    const old = page.objects.filter((o) => o.uploaded.getTime() < cutoff);
+    for (const object of old) await deleteStoredObject(env, object.key, object.size);
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor);
 }
@@ -90,7 +91,7 @@ export async function removeOrphans(env: Env): Promise<number> {
       const known = await env.DB.prepare(`SELECT ${col} AS k FROM ${table} WHERE ${col} IN (${chunk.map(() => "?").join(",")})`).bind(...chunk).all<{ k: string }>();
       const have = new Set(known.results.map((r) => r.k));
       const dead = chunk.filter((k) => !have.has(k));
-      if (dead.length) { await env.BUCKET.delete(dead); removed += dead.length; }
+      for (const key of dead) { await deleteStoredObject(env, key); removed++; }
     }
     // Remember where the scan stopped; start over when it reaches the end.
     await env.DB.prepare("INSERT OR REPLACE INTO idempotency (key, response, created_at) VALUES (?1, ?2, ?3)").bind(stateKey, page.truncated ? page.cursor : "", now()).run();
@@ -100,9 +101,9 @@ export async function removeOrphans(env: Env): Promise<number> {
 
 /** Uploads that never finished. */
 export async function staleAssets(env: Env): Promise<void> {
-  const rows = await env.DB.prepare("SELECT id, r2_key FROM assets WHERE status != 'ready' AND created_at < ?1 LIMIT 100").bind(now() - 86400).all<{ id: string; r2_key: string }>();
+  const rows = await env.DB.prepare("SELECT id, r2_key, byte_size FROM assets WHERE status != 'ready' AND created_at < ?1 LIMIT 100").bind(now() - 86400).all<{ id: string; r2_key: string; byte_size: number }>();
   for (const r of rows.results) {
-    await env.BUCKET.delete(r.r2_key);
+    await deleteStoredObject(env, r.r2_key, r.byte_size);
     await env.DB.prepare("DELETE FROM assets WHERE id = ?1").bind(r.id).run();
   }
 }
@@ -155,9 +156,11 @@ export async function backupMetadata(env: Env): Promise<string> {
     }
   }
   const key = `backups/${new Date().toISOString().slice(0, 10)}.enc`;
-  await env.BUCKET.put(key, await sealBackup(env, key, new TextEncoder().encode(lines.join("\n"))));
+  await putStoredObject(env, key, await sealBackup(env, key, new TextEncoder().encode(lines.join("\n"))));
   const all = (await env.BUCKET.list({ prefix: "backups/" })).objects.map((o) => o.key).sort();
-  if (all.length > 8) await env.BUCKET.delete(all.slice(0, all.length - 8));
+  if (all.length > 8) {
+    for (const keyToDelete of all.slice(0, all.length - 8)) await deleteStoredObject(env, keyToDelete);
+  }
   return key;
 }
 

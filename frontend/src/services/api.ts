@@ -1,6 +1,9 @@
 import type { DesignMode } from '../types';
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
+const PRODUCTION_API_BASE_URL = 'https://zenopher-api.aarushsinghvcd.workers.dev';
+const configuredApiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? '').trim();
+const localApiBaseUrl = /^(https?:\/\/)?(localhost|127\.0\.0\.1)(:\d+)?$/i.test(configuredApiBaseUrl);
+const API_BASE_URL = (import.meta.env.PROD && localApiBaseUrl ? PRODUCTION_API_BASE_URL : configuredApiBaseUrl).replace(/\/$/, '');
 const ACCESS_TOKEN_KEY = 'zenopher_access_token';
 const USER_KEY = 'zenopher_session_user';
 
@@ -35,12 +38,14 @@ export interface ApiShare {
 }
 
 export interface ApiConfig {
-  features: { critique: boolean };
+  features: { critique: boolean; storage_available: boolean };
   limits: {
     max_asset_bytes: number;
     max_version_bytes: number;
     critique_daily_limit: number;
     critique_max_image_px: number;
+    r2_hard_limit_bytes: number;
+    r2_used_bytes: number;
   };
 }
 

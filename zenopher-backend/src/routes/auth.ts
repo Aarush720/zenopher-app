@@ -49,7 +49,12 @@ export function authRoutes(app: Hono<AppEnv>) {
       .bind(await sha256Hex(token), user?.id ?? null, addr, now() + settings(c.env).magicLinkTtl).run();
     // The token travels in the URL fragment, so it never reaches server logs or Referer headers.
     const link = `${settings(c.env).appOrigin}/auth/callback#token=${token}`;
-    c.executionCtx.waitUntil(sendMagicLink(c.env, addr, link));
+    // Do not acknowledge the request until the provider has accepted the message. The previous
+    // waitUntil-only implementation returned 202 even when the Worker had no email secret or
+    // Resend rejected the sender, leaving users stuck on a false "Link sent" state.
+    if (!(await sendMagicLink(c.env, addr, link))) {
+      throw new ApiError(503, "email_unavailable", "Sign-in email is temporarily unavailable. Please try again later.");
+    }
     return c.json({ ok: true }, 202);
   });
 

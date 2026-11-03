@@ -50,6 +50,10 @@ export class R2Shim {
     if (!o) return null;
     return { key, body: new Response(o.data).body, arrayBuffer: async () => o.data.slice().buffer, httpEtag: `"${key.length}-${o.data.length}"`, httpMetadata: { contentType: o.contentType } };
   }
+  async head(key: string) {
+    const o = this.store.get(key);
+    return o ? { key, size: o.data.length } : null;
+  }
   async delete(keys: string | string[]) { for (const k of Array.isArray(keys) ? keys : [keys]) this.store.delete(k); }
   async list(o: { prefix?: string; cursor?: string; limit?: number } = {}) {
     const all = [...this.store.keys()].filter((k) => k.startsWith(o.prefix ?? "")).sort();

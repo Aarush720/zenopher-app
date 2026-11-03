@@ -44,15 +44,22 @@ npm run build
 ## PhotoCraft Creative Mode
 
 Creative Mode is rendered by PhotoCraft's Rust/egui WebAssembly app. Zenopher
-does not recreate that editor in React. Build PhotoCraft first, then serve its
-generated browser files at `/photocraft/index.html`:
+does not recreate that editor in React. For Cloudflare Pages, package PhotoCraft
+first so the WASM is split below the host's 25 MiB per-file limit:
 
 ```bash
-cd ../photocraft-main-2/apps/photocraft-web
-trunk build --release
-mkdir -p ../../../frontend/public/photocraft
-cp -R ../../dist/web/. ../../../frontend/public/photocraft/
+cd ../photocraft-main-2
+packaging/web/package.sh
+rm -rf ../frontend/public/photocraft
+mkdir -p ../frontend/public/photocraft
+unzip -q dist/release/photocraft-web-*.zip -d /tmp/photocraft-package
+cp -R /tmp/photocraft-package/photocraft-web-*/. ../frontend/public/photocraft/
 ```
+
+The packaged site includes the boot loader, compressed WASM parts, generated
+glue, and generated eframe snippets at `/photocraft/index.html`. A direct
+`trunk build --release` is suitable for local development or hosts without a
+per-file cap, but should not be copied directly into the Pages deployment.
 
 Then start Zenopher with `npm run dev`. To point at a separately hosted
 PhotoCraft build, set `VITE_PHOTOCRAFT_WEB_URL` in `.env`.

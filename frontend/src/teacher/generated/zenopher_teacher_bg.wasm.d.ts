@@ -1,0 +1,33 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const __wbg_wasmteacher_free: (a: number, b: number) => void;
+export const wasmteacher_apply: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+export const wasmteacher_apply_all: (a: number) => [number, number, number, number];
+export const wasmteacher_badge: (a: number) => number;
+export const wasmteacher_clear_style: (a: number) => void;
+export const wasmteacher_commit_apply_all: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+export const wasmteacher_critique_request: (a: number) => [number, number, number, number];
+export const wasmteacher_dismiss: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+export const wasmteacher_explain: (a: number, b: number, c: number) => [number, number, number, number];
+export const wasmteacher_export_stats: (a: number) => [number, number, number, number];
+export const wasmteacher_findings: (a: number) => [number, number, number, number];
+export const wasmteacher_gesture_end: (a: number, b: number) => void;
+export const wasmteacher_gesture_start: (a: number) => void;
+export const wasmteacher_import_stats: (a: number, b: number, c: number) => [number, number];
+export const wasmteacher_new: (a: number, b: number) => [number, number, number];
+export const wasmteacher_note_undo: (a: number, b: number, c: number, d: number) => void;
+export const wasmteacher_on_change: (a: number, b: number, c: number, d: number, e: number) => void;
+export const wasmteacher_pump: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+export const wasmteacher_reset_apply_all: (a: number) => void;
+export const wasmteacher_run: (a: number) => void;
+export const wasmteacher_set_level: (a: number, b: number, c: number) => [number, number, number, number];
+export const wasmteacher_set_style_json: (a: number, b: number, c: number) => [number, number];
+export const wasmteacher_show: (a: number, b: number, c: number) => [number, number, number, number];
+export const wasmteacher_take_events: (a: number) => [number, number, number, number];
+export const __wbindgen_externrefs: WebAssembly.Table;
+export const __wbindgen_malloc: (a: number, b: number) => number;
+export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
+export const __externref_table_dealloc: (a: number) => void;
+export const __wbindgen_start: () => void;
