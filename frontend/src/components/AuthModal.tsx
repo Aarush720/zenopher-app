@@ -4,18 +4,20 @@ import { Check, Mail, X } from 'lucide-react';
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onRequestMagicLink: (email: string) => Promise<void>;
+  onRequestMagicLink: (email: string) => Promise<string | void>;
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onRequestMagicLink }) => {
   const [email, setEmail] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const [devLink, setDevLink] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       setSent(false);
+      setDevLink(null);
       setError(null);
     }
   }, [isOpen]);
@@ -27,7 +29,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onRequest
     setError(null);
     setIsSending(true);
     try {
-      await onRequestMagicLink(email.trim());
+      const link = await onRequestMagicLink(email.trim());
+      setDevLink(typeof link === 'string' ? link : null);
       setSent(true);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Could not send the sign-in link.');
@@ -52,7 +55,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onRequest
                 <Check size={18} /> Link sent
               </div>
               <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                Check {email} and open the link on this device to finish signing in.
+                {devLink ? (
+                  <>Local sign-in is enabled. <a href={devLink}>Open the development sign-in link</a> to finish signing in.</>
+                ) : (
+                  <>Check {email} and open the link on this device to finish signing in.</>
+                )}
               </p>
             </div>
           ) : (

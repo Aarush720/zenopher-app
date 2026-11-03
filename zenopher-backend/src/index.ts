@@ -9,7 +9,6 @@ import { configRoutes } from "./routes/config";
 import { consentRoutes } from "./routes/consent";
 import { critiqueRoutes } from "./routes/critique";
 import { designRoutes } from "./routes/designs";
-import { photocraftRoutes } from "./routes/photocraft";
 import { sharingRoutes } from "./routes/sharing";
 
 export function buildApp() {
@@ -23,7 +22,6 @@ export function buildApp() {
   critiqueRoutes(app);
   accountRoutes(app);
   configRoutes(app);
-  photocraftRoutes(app);
   return app;
 }
 

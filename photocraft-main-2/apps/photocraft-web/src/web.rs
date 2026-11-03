@@ -11,7 +11,7 @@ use photocraft_doc::Document;
 use photocraft_ui_egui::i18n;
 use photocraft_ui_egui::served_fonts;
 use photocraft_ui_egui::theme::ThemeKind;
-use photocraft_ui_egui::{FileDialogAnswer, FileDialogRequest, PhotocraftApp, Services, Tool};
+use photocraft_ui_egui::{FileDialogAnswer, FileDialogRequest, PhotocraftApp, Services};
 use serde_json::json;
 use wasm_bindgen::JsCast as _;
 
@@ -59,7 +59,7 @@ pub fn start() {
         };
         let q = query();
         let force_cpu = q.contains("cpu");
-        let corporate_mode = query_param(&q, "zenopherMode").as_deref() == Some("corporate");
+        let corporate_mode = crate::hosted_profile::is_corporate_mode(query_param(&q, "zenopherMode").as_deref());
         let mut options = eframe::WebOptions::default();
         photocraft_ui_egui::gpu_canvas::use_adapter_limits(&mut options.wgpu_options.wgpu_setup);
         if q.contains("webgl")
@@ -112,7 +112,18 @@ pub fn start() {
                     let unsaved = Arc::new(AtomicBool::new(false));
                     guard_unload(unsaved.clone());
                     bridge_for_runner.send_ready();
-                    Ok(Box::new(WebShell { app, inbox, place_inbox, unsaved, served, database, presets, bridge: bridge_for_runner.clone() }))
+                    Ok(Box::new(WebShell {
+                        app,
+                        inbox,
+                        place_inbox,
+                        unsaved,
+                        served,
+                        database,
+                        presets,
+                        bridge: bridge_for_runner.clone(),
+                        zenopher_history: Default::default(),
+                        zenopher_gesture: false,
+                    }))
                 }),
             )
             .await;
@@ -228,23 +239,7 @@ fn configure_hosted_profile(app: &mut PhotocraftApp, corporate: bool) {
         return;
     }
 
-    let allowed = [
-        Tool::Move,
-        Tool::Crop,
-        Tool::Eyedropper,
-        Tool::Brush,
-        Tool::Eraser,
-        Tool::Gradient,
-        Tool::Type,
-        Tool::Hand,
-        Tool::Zoom,
-        Tool::Rectangle,
-        Tool::EllipseShape,
-        Tool::Triangle,
-        Tool::Line,
-        Tool::Frame,
-    ];
-    let hidden: Vec<String> = Tool::ALL.iter().copied().filter(|tool| !allowed.contains(tool)).map(|tool| format!("{tool:?}")).collect();
+    let hidden = crate::hosted_profile::corporate_hidden_tools();
     if let Err(error) = app.run("edit.toolbar", json!({"hidden": hidden})) {
         log::warn!("could not configure the corporate toolbar: {error}");
     }
@@ -326,6 +321,9 @@ struct WebShell {
     database: Option<web_sys::IdbDatabase>,
     presets: crate::preset_bridge::Bridge,
     bridge: crate::bridge::Bridge,
+    /// Zenopher signals: last seen history length per document (undo), and gesture edge.
+    zenopher_history: std::collections::HashMap<u64, usize>,
+    zenopher_gesture: bool,
 }
 
 impl WebShell {
@@ -378,6 +376,30 @@ impl WebShell {
         }
         served_fonts::install(&mut self.app, arrived);
     }
+
+    /// Undo + gesture signals for the Zenopher host. Cheap, best-effort, never blocks.
+    /// `drag` is private to ui-egui, so gesture = pointer down OR transform session OR text edit.
+    fn zenopher_signals(&mut self, ctx: &egui::Context) {
+        // Undo: history shrank since last frame.
+        if let Some(st) = self.app.session.active() {
+            let id = st.doc.id.0;
+            let len = st.history.past_len();
+            if let Some(&prev) = self.zenopher_history.get(&id)
+                && len < prev
+            {
+                self.bridge.send_undo();
+            }
+            self.zenopher_history.insert(id, len);
+        }
+        // Gesture: pointer down, or an active transform/text session.
+        let down = ctx.input(|i| i.pointer.any_down());
+        let busy = self.app.ui.transform.is_some() || self.app.ui.text_edit.is_some();
+        let gesture = down || busy;
+        if gesture != self.zenopher_gesture {
+            self.zenopher_gesture = gesture;
+            self.bridge.send_gesture(gesture);
+        }
+    }
 }
 
 impl eframe::App for WebShell {
@@ -423,6 +445,7 @@ impl eframe::App for WebShell {
         self.app.logic_frame(ctx, frame);
         self.save_presets(ctx);
         self.app.finish_type_reset_logic(ctx);
+        self.zenopher_signals(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {

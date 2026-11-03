@@ -7,6 +7,9 @@ interface PhotoCraftWasmWorkspaceProps {
   toolProfile?: 'creative' | 'corporate';
   onCanvasReady?: () => void;
   onDesignChange?: (updates: Partial<Design>) => void;
+  onUndo?: () => void;
+  onGestureStart?: () => void;
+  onGestureEnd?: () => void;
 }
 
 /**
@@ -20,6 +23,9 @@ export const PhotoCraftWasmWorkspace: React.FC<PhotoCraftWasmWorkspaceProps> = (
   toolProfile = design.mode,
   onCanvasReady,
   onDesignChange,
+  onUndo,
+  onGestureStart,
+  onGestureEnd,
 }) => {
   const [loaded, setLoaded] = useState(false);
   const [bridgeError, setBridgeError] = useState<string | null>(null);
@@ -27,17 +33,23 @@ export const PhotoCraftWasmWorkspace: React.FC<PhotoCraftWasmWorkspaceProps> = (
   const designRef = useRef(design);
   const onCanvasReadyRef = useRef(onCanvasReady);
   const onDesignChangeRef = useRef(onDesignChange);
+  const onUndoRef = useRef(onUndo);
+  const onGestureStartRef = useRef(onGestureStart);
+  const onGestureEndRef = useRef(onGestureEnd);
   const lastSyncedDesignRef = useRef<string | null>(null);
-  const source = import.meta.env.VITE_PHOTOCRAFT_WEB_URL?.trim() || '/photocraft/index.html';
-  const sourceUrl = new URL(source, window.location.href);
+  // Keep PhotoCraft local while the hosted R2/Worker distribution is paused.
+  // Vite serves this bundle from public/photocraft during development.
+  const sourceUrl = new URL('/photocraft/index.html', window.location.origin);
   const iframeOrigin = sourceUrl.origin;
-  sourceUrl.searchParams.set('zenopherOrigin', window.location.origin);
   sourceUrl.searchParams.set('zenopherBuild', '5');
   sourceUrl.searchParams.set('zenopherMode', toolProfile);
 
   useEffect(() => { designRef.current = design; }, [design]);
   useEffect(() => { onCanvasReadyRef.current = onCanvasReady; }, [onCanvasReady]);
   useEffect(() => { onDesignChangeRef.current = onDesignChange; }, [onDesignChange]);
+  useEffect(() => { onUndoRef.current = onUndo; }, [onUndo]);
+  useEffect(() => { onGestureStartRef.current = onGestureStart; }, [onGestureStart]);
+  useEffect(() => { onGestureEndRef.current = onGestureEnd; }, [onGestureEnd]);
 
   useEffect(() => {
     let finished = false;
@@ -82,6 +94,17 @@ export const PhotoCraftWasmWorkspace: React.FC<PhotoCraftWasmWorkspaceProps> = (
         }
       }
 
+      // PhotoCraft undo: learning signal, not a content change.
+      if (message.type === 'photocraft:undo') {
+        onUndoRef.current?.();
+      }
+      if (message.type === 'photocraft:gesture-start') {
+        onGestureStartRef.current?.();
+      }
+      if (message.type === 'photocraft:gesture-end') {
+        onGestureEndRef.current?.();
+      }
+
       if (message.type === 'photocraft:saved' && message.bytes) {
         if (message.design) {
           lastSyncedDesignRef.current = JSON.stringify(message.design);
@@ -123,9 +146,22 @@ export const PhotoCraftWasmWorkspace: React.FC<PhotoCraftWasmWorkspaceProps> = (
   return (
     <section className={`photocraft-wasm-workspace photocraft-${toolProfile}-workspace`} aria-label={`Zenopher ${toolProfile} workspace`}>
       {(!loaded || bridgeError) && (
-        <div className={`photocraft-wasm-loading${bridgeError ? ' is-error' : ''}`} role="status">
+        <div className={`photocraft-wasm-loading${bridgeError ? ' is-error' : ''}`} role="status" style={loaded && bridgeError ? { position: 'relative', inset: 'auto', padding: '20px', background: '#1a1a1a', borderRadius: '12px', margin: '12px' } : undefined}>
           {!bridgeError && <RefreshCw size={16} className="photocraft-wasm-loading-icon" />}
           <span>{bridgeError || `Loading Zenopher ${toolProfile === 'corporate' ? 'Corporate' : 'Creative'} Mode…`}</span>
+          {loaded && bridgeError && (
+            <button
+              style={{ marginTop: '10px', padding: '8px 14px', borderRadius: '8px', background: '#fff', color: '#000', fontWeight: 700, fontSize: '12px' }}
+              onClick={() => {
+                setBridgeError(null);
+                setLoaded(false);
+                // Force the iframe to remount and retry.
+                iframeRef.current?.setAttribute('src', sourceUrl.toString());
+              }}
+            >
+              Retry canvas
+            </button>
+          )}
         </div>
       )}
       <iframe

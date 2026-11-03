@@ -1,9 +1,9 @@
 import type { DesignMode } from '../types';
 
-const PRODUCTION_API_BASE_URL = 'https://zenopher-api.aarushsinghvcd.workers.dev';
 const configuredApiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? '').trim();
-const localApiBaseUrl = /^(https?:\/\/)?(localhost|127\.0\.0\.1)(:\d+)?$/i.test(configuredApiBaseUrl);
-const API_BASE_URL = (import.meta.env.PROD && localApiBaseUrl ? PRODUCTION_API_BASE_URL : configuredApiBaseUrl).replace(/\/$/, '');
+// Keep the API target explicit. In particular, a local production build must
+// not silently jump to a hosted Worker just because Vite set PROD=true.
+const API_BASE_URL = configuredApiBaseUrl.replace(/\/$/, '');
 const ACCESS_TOKEN_KEY = 'zenopher_access_token';
 const USER_KEY = 'zenopher_session_user';
 
@@ -202,8 +202,9 @@ export class ZenopherApi {
     return response.blob();
   }
 
-  async requestMagicLink(email: string, turnstileToken?: string): Promise<void> {
-    await this.request('/auth/magic', { method: 'POST', body: { email, turnstile_token: turnstileToken } });
+  async requestMagicLink(email: string, turnstileToken?: string): Promise<string | void> {
+    const result = await this.request<{ ok: true; dev_link?: string }>('/auth/magic', { method: 'POST', body: { email, turnstile_token: turnstileToken } });
+    return result?.dev_link;
   }
 
   async verifyMagicLink(token: string): Promise<SessionResponse> {

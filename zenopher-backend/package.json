@@ -4,11 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "node scripts/local-dev.mjs",
+    "dev:wrangler": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "migrate:local": "wrangler d1 migrations apply zenopher-v1 --local",
+    "migrate:local": "node scripts/local-dev.mjs --migrate-only",
+    "migrate:local:wrangler": "wrangler d1 migrations apply zenopher-local --local --config wrangler.local.toml",
     "migrate:remote": "wrangler d1 migrations apply zenopher-v1 --remote",
     "build:check": "wrangler deploy --dry-run --outdir dist"
   },
@@ -19,6 +21,8 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250101.0",
     "@types/node": "^22.0.0",
+      "esbuild": "0.28.2",
+      "miniflare": "5.20261023.3-beta",
     "typescript": "^5.4.0",
     "vitest": "^5.0.5",
     "wrangler": "^4.156.0"

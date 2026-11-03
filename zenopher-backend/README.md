@@ -25,6 +25,20 @@ node scripts/build-catalog.mjs styles/*.json --out catalog-dist   # then upload 
 ```
 **Back up `ZPH_MASTER_KEY` somewhere other than Cloudflare.** Every design key is wrapped by it. Lose it and all designs are unreadable.
 
+## Local development
+
+From the repository root, run:
+
+```sh
+./run-project.sh
+```
+
+This starts the Vite frontend at `http://127.0.0.1:3000` and a local Miniflare Worker at `http://127.0.0.1:8787`. The Worker bundles this same source, creates/applies the D1 migrations automatically, and persists D1/R2 data under `zenopher-backend/.wrangler/local-state`. When `ZPH_MASTER_KEY` is not set, a development key is generated once in that ignored state directory so encrypted designs remain readable after restarts. No Cloudflare account, hosted Worker, D1 database, or R2 bucket is used.
+
+The teacher model is bundled in `frontend/src/teacher/generated/` and runs in the browser as WASM. Open a design in Corporate mode to activate the teacher review panel; its base checks work offline, while local catalog/learning requests use the local Worker.
+
+Local auth is also self-contained: the sign-in dialog receives a one-time development link instead of calling an email provider. This behavior is enabled only by `LOCAL_AUTH_ENABLED` in the local launcher.
+
 ## Endpoints (`/v1`)
 | Area | Routes |
 |---|---|
@@ -60,7 +74,7 @@ Schema; envelope encryption (AES-256-GCM, 96-bit nonces, AAD = design id / desig
 2. **Free-plan CPU.** Workers Free allows about 10 ms of CPU per request. Encrypting a 25 MB save or building a large export will probably exceed it; small designs (assets are stored separately) should be fine. Measure with `wrangler tail`, and lower `MAX_VERSION_BYTES` or move to the paid plan if you see `exceeded CPU` errors. D1 free limits (writes/day) apply too.
 3. **Same site.** The refresh cookie is `SameSite=Strict`, so the app and API must share a registrable domain (`app.example.com` + `api.example.com`). On `pages.dev` + `workers.dev` the cookie will not be sent.
 4. **Gzip bombs.** The server only checks the gzip header, per spec. A shared design can decompress to something huge in a viewer's browser; cap decompressed size in the engine's loader.
-5. **Tests are not workerd.** They run on in-memory doubles for D1 and R2. Before launch, run `wrangler dev --local` after `npm run migrate:local` and click through sign-in, a save and a critique once. I bundled with `wrangler deploy --dry-run` but did not deploy.
+5. **Tests are not workerd.** They run on in-memory doubles for D1 and R2. For a local runtime check, use `npm run dev` (or `./run-project.sh` from the repository root) and click through sign-in, a save and a critique once. The production Wrangler config remains available for a later deployment, but is not used by the local launcher.
 6. **Backups** dump up to 100,000 rows in one invocation. Fine for the MVP; at scale use D1 Time Travel or export in pages.
 7. Workers log retention is Cloudflare's own. Record it in the privacy notice (spec 8.8).
 

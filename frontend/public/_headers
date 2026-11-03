@@ -1,0 +1,24 @@
+/*
+  X-Content-Type-Options: nosniff
+
+/photocraft/*.wasm
+  Content-Type: application/wasm
+  Cache-Control: public, max-age=31536000, immutable
+
+/photocraft/photocraft-web-boot-*.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/photocraft/photocraft-web-boot-*_bg.wasm
+  Cache-Control: public, max-age=31536000, immutable
+
+/photocraft/index.html
+  Cache-Control: no-cache
+
+/photocraft/app/*.part-*
+  Cache-Control: public, max-age=31536000, immutable
+
+/photocraft/app/photocraft-web.js
+  Cache-Control: no-cache
+
+/photocraft/app/parts.txt
+  Cache-Control: no-cache

@@ -49,6 +49,13 @@ export function authRoutes(app: Hono<AppEnv>) {
       .bind(await sha256Hex(token), user?.id ?? null, addr, now() + settings(c.env).magicLinkTtl).run();
     // The token travels in the URL fragment, so it never reaches server logs or Referer headers.
     const link = `${settings(c.env).appOrigin}/auth/callback#token=${token}`;
+    if (c.env.LOCAL_AUTH_ENABLED === "true") {
+      // Local development has no mail provider. Returning the one-time link is
+      // intentionally gated to the local-only config and never enabled by the
+      // production Wrangler variables.
+      console.log(JSON.stringify({ level: "info", event: "local_magic_link", email: addr }));
+      return c.json({ ok: true, dev_link: link }, 202);
+    }
     // Do not acknowledge the request until the provider has accepted the message. The previous
     // waitUntil-only implementation returned 202 even when the Worker had no email secret or
     // Resend rejected the sender, leaving users stuck on a false "Link sent" state.

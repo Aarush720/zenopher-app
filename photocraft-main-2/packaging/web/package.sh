@@ -9,7 +9,8 @@
 #
 # The site holds the app's wasm gzipped and cut into parts (app/), started by the small
 # photocraft-web-boot module, so no file is larger than a part however large the app grows
-# (issue #5302). dist/web still holds the app as Trunk builds it, in one .wasm.
+# (issue #5302). Trunk's one-file app output is used only as a staging input before
+# the wasm is compressed and split for the host's per-file limit.
 set -euo pipefail
 # shellcheck source=../env.sh
 . "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
@@ -17,12 +18,36 @@ HERE="$ROOT/packaging/web"
 
 if [[ "${1:-}" != "--skip-build" ]]; then
   command -v trunk >/dev/null || { echo "error: trunk not found (cargo install trunk --locked)" >&2; exit 1; }
-  (cd "$ROOT/apps/photocraft-web" && trunk build --release)
-  (cd "$ROOT/apps/photocraft-web-boot" && trunk build --release)
+  # Build outside the checkout. This avoids stale Trunk locks and AppleDouble
+  # metadata on external volumes, while keeping --skip-build useful for CI
+  # jobs that already produced dist/web and dist/web-boot.
+  BUILD_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/photocraft-web-build.XXXXXX")"
+  trap 'rm -rf "$BUILD_ROOT"' EXIT
+  APP="$BUILD_ROOT/web"
+  BOOT="$BUILD_ROOT/web-boot"
+  (cd "$ROOT/apps/photocraft-web" && trunk build --release --dist "$APP")
+  (cd "$ROOT/apps/photocraft-web-boot" && trunk build --release --dist "$BOOT")
+else
+  APP="$ROOT/dist/web"       # the app: index.html, wasm-bindgen glue, one .wasm
+  BOOT="$ROOT/dist/web-boot" # the page that ships, and the module that starts the app from parts
 fi
 
-APP="$ROOT/dist/web"       # the app: index.html, wasm-bindgen glue, one .wasm
-BOOT="$ROOT/dist/web-boot" # the page that ships, and the module that starts the app from parts
+# macOS may leave AppleDouble metadata files on external volumes. Trunk can copy
+# those sidecars into its dist tree and even add preload links for them; they are
+# not application assets and are removed before packaging.
+clean_macos_sidecars() {
+  local site
+  for site in "$APP" "$BOOT"; do
+    [[ -d "$site" ]] || continue
+    find "$site" -name '._*' -delete
+    if [[ -f "$site/index.html" ]]; then
+      sed -E -i.bak 's#<link[^>]*href="[^"]*/\._[^"]*"[^>]*>##g' "$site/index.html"
+      rm -f "$site/index.html.bak"
+    fi
+  done
+}
+clean_macos_sidecars
+
 for site in "$APP" "$BOOT"; do
   [[ -f "$site/index.html" ]] || { echo "error: $site/index.html missing; run without --skip-build" >&2; exit 1; }
   # Paths must be relative so the site works under any prefix (public_url = "./" in Trunk.toml).
@@ -50,7 +75,9 @@ for wasm in "$APP"/*_bg.wasm; do
 done
 [[ -n "$WASM" ]] || { echo "error: no .wasm in $APP" >&2; exit 1; }
 STEM="$(basename "$WASM" _bg.wasm)" # photocraft-web-<content hash>
-GLUE_NAME="$(sed -nE 's/.*from [\"'\"']\.\/(photocraft-web-[^\"'\"']+\.js)[\"'\"'].*/\1/p' "$APP/index.html" | head -n 1)"
+# Trunk emits the module import with either quote style. Extract the generated
+# app glue by filename instead of coupling packaging to the HTML formatter.
+GLUE_NAME="$(grep -oE 'photocraft-web-[[:alnum:]]+\.js' "$APP/index.html" | head -n 1)"
 [[ -n "$GLUE_NAME" ]] || { echo "error: could not find the app's JS glue in $APP/index.html" >&2; exit 1; }
 GLUE="$APP/$GLUE_NAME"
 [[ -f "$GLUE" ]] || { echo "error: $GLUE missing" >&2; exit 1; }

@@ -12,6 +12,7 @@ export interface Env {
   ALLOWED_ORIGINS: string;
   EMAIL_API_URL?: string;
   EMAIL_FROM?: string;
+  LOCAL_AUTH_ENABLED?: string;
   GOOGLE_CLIENT_ID?: string;
   TURNSTILE_REQUIRED?: string;
   CRITIQUE_ENABLED?: string;

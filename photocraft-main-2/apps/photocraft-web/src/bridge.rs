@@ -150,6 +150,25 @@ impl Bridge {
         }));
     }
 
+    /// Zenopher learning signal: the teacher counts an undo only within 60 s of a fix.
+    /// This is not a content change by itself — the changed design arrives via send_changed.
+    pub fn send_undo(&self) {
+        self.post_json(json!({
+            "source": PHOTOCRAFT_SOURCE,
+            "type": "photocraft:undo",
+            "protocol": PROTOCOL_VERSION,
+        }));
+    }
+
+    /// Gesture suppression: drags and typing should not pump the teacher mid-gesture.
+    pub fn send_gesture(&self, start: bool) {
+        self.post_json(json!({
+            "source": PHOTOCRAFT_SOURCE,
+            "type": if start { "photocraft:gesture-start" } else { "photocraft:gesture-end" },
+            "protocol": PROTOCOL_VERSION,
+        }));
+    }
+
     fn post_json(&self, value: Value) {
         let Ok(value) = JSON::parse(&value.to_string()) else { return };
         self.post_js(value);

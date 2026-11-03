@@ -260,6 +260,8 @@ export interface RustTeacherState {
   applyFix: (finding: ReviewFinding) => Promise<void>;
   applyAllFixes: () => Promise<void>;
   noteUndo: () => Promise<void>;
+  gestureStart: () => void;
+  gestureEnd: () => void;
 }
 
 function cacheKey(designId: string): string {
@@ -524,5 +526,13 @@ export function useRustTeacher(
     await bridgeRef.current?.onUndo();
   }, []);
 
-  return { findings, unavailable, styleMessage, loading, error, applyFix, applyAllFixes, noteUndo };
+  const gestureStart = useCallback(() => {
+    bridgeRef.current?.gestureStart();
+  }, []);
+
+  const gestureEnd = useCallback(() => {
+    bridgeRef.current?.gestureEnd();
+  }, []);
+
+  return { findings, unavailable, styleMessage, loading, error, applyFix, applyAllFixes, noteUndo, gestureStart, gestureEnd };
 }

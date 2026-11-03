@@ -38,10 +38,17 @@ export class TeacherBridge {
 
   private tick(): void {
     if (this.level === "creative") return;
-    const out = this.t.pump(this.host.snapshotJson(), this.host.now());
-    if (!out) return;
-    this.unavailable = (JSON.parse(out) as Diff).unavailable;
-    this.notify();
+    try {
+      const snap = this.host.snapshotJson();
+      if (!snap) return;
+      JSON.parse(snap); // fail fast: never hand malformed JSON to WASM
+      const out = this.t.pump(snap, this.host.now());
+      if (!out) return;
+      this.unavailable = (JSON.parse(out) as Diff).unavailable;
+      this.notify();
+    } catch {
+      // A bad snapshot or WASM throw must never kill the timer; next tick retries.
+    }
   }
 
   // --- from the document core ---
@@ -74,11 +81,19 @@ export class TeacherBridge {
   }
 
   async apply(key: string): Promise<void> {
-    const batch = JSON.parse(this.t.apply(key, this.host.now())) as FixBatch;
+    let batch: FixBatch;
+    try {
+      batch = JSON.parse(this.t.apply(key, this.host.now())) as FixBatch;
+    } catch {
+      return; // unknown key or engine error: leave findings as-is, next tick recovers
+    }
     this.t.reset_apply_all();
-    this.host.runCommands(batch.commands);
-    this.lastApplied = batch.keys;
-    await this.persist();
+    try {
+      this.host.runCommands(batch.commands);
+    } finally {
+      this.lastApplied = batch.keys;
+      await this.persist();
+    }
   }
   private lastApplied: string[] = [];
 
@@ -90,17 +105,36 @@ export class TeacherBridge {
   }
 
   /** Step one: the summary. Nothing changes yet. */
-  planApplyAll(): ApplyAllPlan { return JSON.parse(this.t.apply_all()) as ApplyAllPlan; }
+  planApplyAll(): ApplyAllPlan {
+    try {
+      return JSON.parse(this.t.apply_all()) as ApplyAllPlan;
+    } catch {
+      // No safe fixes or engine error: return an empty plan, not a throw.
+      return { id: 0, pass: 0, max_passes: 0, fixes: [], skipped: [], summary: "Nothing can be fixed automatically." };
+    }
+  }
   /** Step two, after the user confirms the summary. */
   async commitApplyAll(plan: ApplyAllPlan): Promise<void> {
-    const batch = JSON.parse(this.t.commit_apply_all(JSON.stringify(plan), this.host.now())) as FixBatch;
-    this.host.runCommands(batch.commands);
-    this.lastApplied = batch.keys;
-    await this.persist();
+    let batch: FixBatch;
+    try {
+      batch = JSON.parse(this.t.commit_apply_all(JSON.stringify(plan), this.host.now())) as FixBatch;
+    } catch {
+      return; // stale plan or pass limit: summary is void, next pump re-plans
+    }
+    try {
+      this.host.runCommands(batch.commands);
+    } finally {
+      this.lastApplied = batch.keys;
+      await this.persist();
+    }
   }
 
   async dismiss(key: string): Promise<void> {
-    this.t.dismiss(key, this.host.snapshotJson(), this.host.now());
+    try {
+      this.t.dismiss(key, this.host.snapshotJson(), this.host.now());
+    } catch {
+      return; // already resolved: next tick reconciles
+    }
     await this.persist();
     this.notify();
   }

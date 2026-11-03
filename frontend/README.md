@@ -61,15 +61,12 @@ glue, and generated eframe snippets at `/photocraft/index.html`. A direct
 `trunk build --release` is suitable for local development or hosts without a
 per-file cap, but should not be copied directly into the Pages deployment.
 
-Then start Zenopher with `npm run dev`. To point at a separately hosted
-PhotoCraft build, set `VITE_PHOTOCRAFT_WEB_URL` in `.env`.
+Then start Zenopher with `npm run dev`. PhotoCraft is intentionally loaded from
+the local `/photocraft/index.html` bundle during development.
 
 The two apps communicate through a same-origin `postMessage` bridge. Zenopher
 sends `zenopher:open-design` with the `Design` JSON; PhotoCraft replies with
 `photocraft:ready`, `photocraft:opened`, or `photocraft:error`. The host's
 `Save .pcraft` control sends `zenopher:save`, and PhotoCraft returns the native
 `.pcraft` bytes as a structured-cloned `Uint8Array` in `photocraft:saved`.
-When PhotoCraft is hosted on another origin, the host passes its origin through
-the `zenopherOrigin` query parameter and the Rust side validates it before
-accepting messages.
 

@@ -14,6 +14,7 @@ import { HelpView } from './views/HelpView';
 import { SharedDesignView } from './views/SharedDesignView';
 
 import { PhotoCraftWasmWorkspace } from './components/editor/PhotoCraftWasmWorkspace';
+import { ReviewPanel } from './components/editor/ReviewPanel';
 
 import { NewDesignModal } from './components/NewDesignModal';
 import { ExportModal } from './components/ExportModal';
@@ -553,6 +554,14 @@ export const App: React.FC = () => {
       entryRevealTimerRef.current = null;
     }
 
+    // Failsafe: never trap the user behind the entry curtain. If the canvas
+    // never signals ready (blocked iframe, missing /photocraft bundle, no
+    // WebGPU), lift the curtain after 8s so the error state is visible.
+    entryRevealTimerRef.current = window.setTimeout(() => {
+      entryRevealTimerRef.current = null;
+      finishEditorEntry();
+    }, 8000);
+
     void Promise.all([
       storage.saveDesign(updated),
       preloadDesignAssets(updated),
@@ -901,7 +910,33 @@ export const App: React.FC = () => {
               toolProfile={activeDesign.mode}
               onCanvasReady={handleCanvasReady}
               onDesignChange={(updates) => handleUpdateActiveDesign(updates)}
+              onUndo={() => void teacher.noteUndo()}
+              onGestureStart={() => teacher.gestureStart()}
+              onGestureEnd={() => teacher.gestureEnd()}
             />
+            {activeDesign.mode === 'corporate' && (
+              <aside className="floating-panel teacher-review-panel" aria-label="Design review">
+                {(teacher.loading || teacher.error || teacher.styleMessage || teacher.unavailable.length > 0) && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '10px', fontSize: '11px', color: 'var(--text-muted)' }}>
+                    {teacher.loading && <span>Checking your design…</span>}
+                    {teacher.error && <span role="alert">{teacher.error}</span>}
+                    {teacher.styleMessage && <span>{teacher.styleMessage}</span>}
+                    {teacher.unavailable.length > 0 && (
+                      <span>Some checks could not run on this page: {teacher.unavailable.join(', ')}.</span>
+                    )}
+                  </div>
+                )}
+                <ReviewPanel
+                  design={activeDesign}
+                  findings={findings}
+                  onApplyFix={handleApplyFix}
+                  onApplyAllFixes={handleApplyAllFixes}
+                  onOpenStylePicker={() => setStylePickerOpen(true)}
+                  onRequestCloudCritique={handleRequestCloudCritique}
+                  cloudReviewAvailable={cloudReviewAvailable}
+                />
+              </aside>
+            )}
           </div>
         ) : currentDestination === 'home' ? (
           <HomeView
@@ -1112,9 +1147,7 @@ export const App: React.FC = () => {
       <AuthModal
         isOpen={authModalOpen}
         onClose={() => setAuthModalOpen(false)}
-        onRequestMagicLink={async (email) => {
-          await api.requestMagicLink(email);
-        }}
+        onRequestMagicLink={(email) => api.requestMagicLink(email)}
       />
 
       {activeDesign?.remoteId && (

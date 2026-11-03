@@ -1,0 +1,38 @@
+name = "zenopher-api-local"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+# This configuration is deliberately separate from wrangler.toml. It never points
+# Wrangler at the production D1 database or R2 bucket; both bindings are local.
+
+[vars]
+APP_ORIGIN = "http://localhost:3000"
+ALLOWED_ORIGINS = "http://localhost:3000"
+EMAIL_API_URL = ""
+EMAIL_FROM = "Zenopher <login@localhost>"
+LOCAL_AUTH_ENABLED = "true"
+GOOGLE_CLIENT_ID = ""
+TURNSTILE_REQUIRED = "false"
+CRITIQUE_ENABLED = "false"
+CRITIQUE_STARTING_CREDITS = "150"
+CRITIQUE_RESERVE_CREDITS = "10"
+CRITIQUE_COST_PER_REVIEW = "1"
+CRITIQUE_DAILY_LIMIT = "2"
+MUSE_API_URL = ""
+MUSE_MODEL = ""
+MUSE_ACCEPTS_IMAGES = "false"
+R2_HARD_LIMIT_BYTES = "8589934592"
+R2_RESERVED_BYTES = "0"
+MAX_ASSET_BYTES = "10485760"
+MAX_VERSION_BYTES = "26214400"
+DELETION_GRACE_DAYS = "14"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "zenopher-local"
+database_id = "00000000-0000-0000-0000-000000000001"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "zenopher-local"

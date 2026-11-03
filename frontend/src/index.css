@@ -231,6 +231,19 @@ body {
 
 /* Both modes use the same PhotoCraft engine. Corporate mode changes the Rust toolbar profile,
    not the canvas implementation, so there is never a second React editor to drift out of sync. */
+.editor-workspace.photocraft-editor-workspace.corporate-mode-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 8px;
+  background: #000000;
+}
+
+.teacher-review-panel {
+  min-height: 0;
+  max-height: 100%;
+  overflow-y: auto;
+}
+
 .photocraft-editor-workspace {
   display: flex;
   min-width: 0;

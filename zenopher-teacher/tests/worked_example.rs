@@ -338,6 +338,41 @@ fn tampered_style_is_rejected() {
 }
 
 #[test]
+fn style_hash_is_canonical_not_insertion_order() {
+    // build-catalog.mjs sorts keys recursively; our hash must match regardless
+    // of the order serde_json::json! inserted them.
+    let a = serde_json::json!({"b": 1.0, "a": {"d": 2, "c": 1}, "content_hash": ""});
+    let b = serde_json::json!({"a": {"c": 1, "d": 2}, "b": 1, "content_hash": ""});
+    assert_eq!(compute_hash(&a), compute_hash(&b));
+    // 1 and 1.0 hash the same: JS JSON.stringify(1.0) is "1".
+    let c = serde_json::json!({"v": 1, "content_hash": ""});
+    let d = serde_json::json!({"v": 1.0, "content_hash": ""});
+    assert_eq!(compute_hash(&c), compute_hash(&d));
+}
+
+#[test]
+fn nan_style_values_are_rejected_not_panics() {
+    let mut v: serde_json::Value = serde_json::from_str(&bauhaus_json()).unwrap();
+    v["patterns"]["colour.families"]["tolerance"] = serde_json::json!(f64::NAN);
+    assert!(validate_and_compile(&v.to_string()).is_err(), "NaN tolerance must fail validation");
+    let mut v2: serde_json::Value = serde_json::from_str(&bauhaus_json()).unwrap();
+    v2["overrides"]["spacing.cv_threshold"] = serde_json::json!(f64::INFINITY);
+    assert!(validate_and_compile(&v2.to_string()).is_err(), "inf override must fail validation");
+}
+
+#[test]
+fn stale_plan_cannot_commit_after_an_edit() {
+    let snap = example();
+    let mut t = teacher_with_style();
+    settle(&mut t, &snap);
+    let plan = t.apply_all().expect("plan builds");
+    assert!(!plan.fixes.is_empty());
+    // Any edit after the summary voids it.
+    t.on_change(&[1], false, 20_000);
+    assert!(t.commit_apply_all(&plan, 20_001).is_err(), "stale plan must not commit");
+}
+
+#[test]
 fn learning_events_carry_no_content() {
     let snap = example();
     let mut t = teacher_with_style();
