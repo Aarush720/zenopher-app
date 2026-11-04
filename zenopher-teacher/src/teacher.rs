@@ -5,7 +5,7 @@ use crate::critique::{self, CritiqueRequest};
 use crate::events::{LearningEvent, Outcome};
 use crate::finding::*;
 use crate::hints::{Display, Hints, RuleStats};
-use crate::measure::Env;
+use crate::measure::{Env, MeasurementCache};
 use crate::messages;
 use crate::model::*;
 use crate::planner::{self, ApplyAllPlan, FixBatch};
@@ -23,6 +23,7 @@ use std::sync::Arc;
 pub enum TeacherError {
     NotFound,
     NoSafeFix,
+    ReviewPending,
     StalePlan,
     PassLimit,
 }
@@ -31,6 +32,9 @@ impl std::fmt::Display for TeacherError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             TeacherError::NotFound => "That finding is no longer there.",
+            TeacherError::ReviewPending => {
+                "The design changed. Wait for the current review to finish."
+            }
             TeacherError::NoSafeFix => "This finding has no automatic fix.",
             TeacherError::StalePlan => "The design changed since the summary was shown.",
             TeacherError::PassLimit => "Apply all has already run its maximum number of passes.",
@@ -59,6 +63,7 @@ struct RunState {
     fresh: Vec<Finding>,
     failed: Vec<String>,
     cfg: Config,
+    measurements: MeasurementCache,
 }
 
 struct Recent {
@@ -83,7 +88,8 @@ pub struct Teacher {
     recent: HashMap<FindingKey, Recent>,
     bg: RefCell<BgCache>,
     next_plan: u64,
-    last_plan: Option<u64>,
+    last_plan: Option<ApplyAllPlan>,
+    findings_current: bool,
     passes: u8,
     last_unavailable: Vec<String>,
     last_versions: HashMap<LayerId, u64>,
@@ -108,6 +114,7 @@ impl Teacher {
             bg: RefCell::new(BgCache::default()),
             next_plan: 1,
             last_plan: None,
+            findings_current: false,
             passes: 0,
             last_unavailable: vec![],
             last_versions: HashMap::new(),
@@ -149,6 +156,7 @@ impl Teacher {
         self.run = None;
         self.passes = 0;
         self.last_plan = None;
+        self.findings_current = false;
         if level == Level::Creative {
             let d = self.store.clear();
             self.emit(&d);
@@ -163,6 +171,7 @@ impl Teacher {
         self.run = None;
         self.passes = 0;
         self.last_plan = None;
+        self.findings_current = false;
         if self.level != Level::Creative {
             self.sched.force();
         }
@@ -180,6 +189,7 @@ impl Teacher {
     pub fn on_change(&mut self, layers: &[LayerId], page_changed: bool, now: u64) {
         self.run = None;
         self.last_plan = None;
+        self.findings_current = false;
         self.sched.on_change(layers, page_changed, now);
     }
     pub fn gesture_start(&mut self) {
@@ -192,7 +202,20 @@ impl Teacher {
     pub fn run(&mut self) {
         if self.level != Level::Creative {
             self.run = None;
+            self.last_plan = None;
+            self.findings_current = false;
             self.sched.force();
+        }
+    }
+
+    /// Lets browser hosts sleep between edits instead of polling and serializing snapshots.
+    pub fn next_pump_delay(&self, now: u64) -> Option<u64> {
+        if self.level == Level::Creative || self.sched.gesture_active() {
+            None
+        } else if self.run.is_some() {
+            Some(0)
+        } else {
+            self.sched.next_delay(now)
         }
     }
 
@@ -206,12 +229,13 @@ impl Teacher {
             self.sched.poll(now)?;
             self.start_run();
         }
-        let eff = self.effective();
         let mut run = self.run.take()?;
         self.page_size = (snap.page.width_px, snap.page.height_px);
-        let env = Env::new(snap, &run.cfg, renderer, &self.bg);
+        let env = Env::new(snap, &run.cfg, renderer, &self.bg, &run.measurements);
         let mut done = 0;
-        while run.next < run.jobs.len() && done < self.cfg.orchestration.rules_per_slice {
+        while run.next < run.jobs.len()
+            && done < self.cfg.orchestration.rules_per_slice.clamp(1, 64)
+        {
             let (id, class, result) = match &run.jobs[run.next] {
                 Job::Rule(def) => (def.id.to_string(), def.class, guarded(|| (def.run)(&env))),
                 Job::Pattern(p) => (p.id.clone(), p.class, guarded(|| rules::pattern(&env, p))),
@@ -242,6 +266,7 @@ impl Teacher {
         run.failed.dedup();
         diff.unavailable = run.failed;
         self.last_versions = versions;
+        self.findings_current = true;
         let unavailable_changed = diff.unavailable != self.last_unavailable;
         self.last_unavailable = diff.unavailable.clone();
         if diff.added.is_empty()
@@ -279,6 +304,7 @@ impl Teacher {
             fresh: vec![],
             failed: vec![],
             cfg: self.cfg.with_overrides(&overrides),
+            measurements: MeasurementCache::default(),
         });
     }
 
@@ -325,10 +351,12 @@ impl Teacher {
     // --- acting ---
 
     fn record(&mut self, rule: &str, class: Class, outcome: Outcome, now: u64) {
+        self.recent
+            .retain(|_, r| now.saturating_sub(r.at) <= 60_000);
         self.hints.bump(rule, now, |s| match outcome {
-            Outcome::Applied => s.applied += 1,
-            Outcome::Dismissed => s.dismissed += 1,
-            Outcome::Undone => s.undone_within_60s += 1,
+            Outcome::Applied => s.applied = s.applied.saturating_add(1),
+            Outcome::Dismissed => s.dismissed = s.dismissed.saturating_add(1),
+            Outcome::Undone => s.undone_within_60s = s.undone_within_60s.saturating_add(1),
         });
         self.events.push(LearningEvent {
             rule: rule.to_string(),
@@ -342,6 +370,9 @@ impl Teacher {
 
     /// One safe fix, returned as commands for one undoable step.
     pub fn apply(&mut self, key: &FindingKey, now: u64) -> Result<FixBatch, TeacherError> {
+        if !self.findings_current {
+            return Err(TeacherError::ReviewPending);
+        }
         let f = self.store.get(key).ok_or(TeacherError::NotFound)?.clone();
         let fix = f
             .fix
@@ -361,11 +392,16 @@ impl Teacher {
                 at: now,
             },
         );
+        self.findings_current = false;
+        self.last_plan = None;
         Ok(batch)
     }
 
     /// Step one of Apply all: the summary. Nothing changes until `commit_apply_all`.
     pub fn apply_all(&mut self) -> Result<ApplyAllPlan, TeacherError> {
+        if !self.findings_current {
+            return Err(TeacherError::ReviewPending);
+        }
         let max = self.cfg.orchestration.apply_all_max_passes;
         if self.passes >= max {
             return Err(TeacherError::PassLimit);
@@ -380,7 +416,7 @@ impl Teacher {
             return Ok(plan);
         }
         self.next_plan += 1;
-        self.last_plan = Some(id);
+        self.last_plan = Some(plan.clone());
         Ok(plan)
     }
 
@@ -390,10 +426,11 @@ impl Teacher {
         plan: &ApplyAllPlan,
         now: u64,
     ) -> Result<FixBatch, TeacherError> {
-        if self.last_plan != Some(plan.id) {
+        if !self.findings_current || self.last_plan.as_ref() != Some(plan) {
             return Err(TeacherError::StalePlan);
         }
         self.last_plan = None;
+        self.findings_current = false;
         self.passes += 1;
         for f in &plan.fixes {
             let class = self

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Canvas edge regression</title>
+  <style>
+    html,body { margin:0; height:100%; background:#101010; color:#eee; font:14px system-ui; }
+    body { display:flex; flex-direction:column; }
+    header { display:flex; align-items:center; gap:16px; padding:12px; flex-wrap:wrap; }
+    select { padding:5px; }
+    #workspace { flex:1; min-height:0; }
+    iframe { width:100%; height:100%; border:0; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>Canvas edge regression — synthetic document</strong>
+    <label>Size <select id="size"><option value="1080,1080">1080 × 1080</option><option value="1240,1754">1240 × 1754</option><option value="1920,1080">1920 × 1080</option><option value="1050,600">1050 × 600</option></select></label>
+    <label>Renderer <select id="renderer"><option value="auto">Automatic</option><option value="webgl">WebGL2</option><option value="webgpu">WebGPU</option></select></label>
+    <label>Mode <select id="mode"><option value="corporate">Corporate</option><option value="creative">Creative</option></select></label>
+    <span id="status" role="status">Loading…</span>
+  </header>
+  <div id="workspace"></div>
+  <script type="module">
+    import { needsPhotoCraftWebGl } from '../src/components/editor/photocraftRuntime.ts';
+    const size = document.querySelector('#size');
+    const renderer = document.querySelector('#renderer');
+    const mode = document.querySelector('#mode');
+    const status = document.querySelector('#status');
+    const params = new URLSearchParams(location.search);
+    for(const select of [size,renderer,mode]) {
+      const value = params.get(select.id);
+      if([...select.options].some(option => option.value === value)) select.value = value;
+    }
+    let iframe;
+    let design;
+    function open() {
+      const [width,height] = size.value.split(',').map(Number);
+      design = {id:'canvas-regression',title:`Canvas ${width} × ${height}`,width,height,background:'#111111',layers:[
+        {id:'title',name:'Title',type:'text',x:width*.1,y:height*.15,width:width*.8,height:100,text:'Canvas edge test',fontSize:48,fill:'#ffffff'},
+        {id:'subtitle',name:'Subtitle',type:'text',x:width*.1,y:height*.3,width:width*.8,height:60,text:'The dark background must reach all four edges.',fontSize:18,fill:'#ffffff'},
+      ]};
+      const next = document.createElement('iframe');
+      next.title = 'Synthetic PhotoCraft canvas';
+      next.allow = 'webgpu';
+      const url = new URL('/photocraft/index.html',location.origin);
+      url.searchParams.set('zenopherMode',mode.value);
+      if(renderer.value === 'webgl' || (renderer.value === 'auto' && needsPhotoCraftWebGl(navigator.userAgent))) url.searchParams.set('webgl','1');
+      next.src = url;
+      iframe = next;
+      document.querySelector('#workspace').replaceChildren(next);
+      status.textContent = 'Loading…';
+    }
+    window.addEventListener('message',event => {
+      if(event.source !== iframe.contentWindow || event.origin !== location.origin || event.data?.source !== 'photocraft') return;
+      if(event.data.type === 'photocraft:ready') iframe.contentWindow.postMessage({source:'zenopher',type:'zenopher:open-design',requestId:'preview-open',design},location.origin);
+      if(event.data.type === 'photocraft:opened') {
+        status.textContent = `Opened ${design.width} × ${design.height}`;
+        iframe.contentWindow.postMessage({source:'zenopher',type:'zenopher:sync',requestId:'preview-size'},location.origin);
+      }
+      if(event.data.type === 'photocraft:changed') status.textContent = `Document confirmed: ${event.data.design.width} × ${event.data.design.height}`;
+      if(event.data.type === 'photocraft:error') status.textContent = event.data.message;
+    });
+    for(const select of [size,renderer,mode]) select.addEventListener('change',open);
+    open();
+  </script>
+</body>
+</html>

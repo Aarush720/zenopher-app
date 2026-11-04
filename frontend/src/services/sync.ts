@@ -126,25 +126,31 @@ export async function hydrateDesignAssets(design: Design, shareToken?: string): 
 }
 
 /** Pulls remote versions that are newer than the local copy during app startup. */
-export async function pullRemoteDesigns(): Promise<Design[]> {
+export async function pullRemoteDesigns(localDesigns: readonly Design[] = []): Promise<Design[]> {
   if (!api.authenticated) return [];
   const [active, trashed] = await Promise.all([api.listDesigns(), api.listDesigns(true)]);
-  const metas = [...active.designs, ...trashed.designs].filter((meta, index, all) => all.findIndex((item) => item.id === meta.id) === index);
+  const metas = [...new Map([...active.designs, ...trashed.designs].map((meta) => [meta.id, meta])).values()];
+  const localByRemoteId = new Map(localDesigns.filter((design) => design.remoteId).map((design) => [design.remoteId, design]));
   const pulled: Design[] = [];
-
-  for (const meta of metas) {
-    if (meta.current_version < 1) continue;
-    const document = await api.getDesignContent(meta.id, meta.current_version);
-    const design = await hydrateDesignAssets(await decodeDesignDocument(document));
-    pulled.push({
-      ...design,
-      remoteId: meta.id,
-      remoteVersion: meta.current_version,
-      isDeleted: Boolean(meta.trashed_at),
-      deletedAt: meta.trashed_at ?? undefined,
-      updatedAt: Math.max(design.updatedAt, meta.updated_at),
-      syncStatus: 'synced',
-    });
-  }
+  const pending = metas.filter((meta) => meta.current_version >= 1 && (localByRemoteId.get(meta.id)?.remoteVersion ?? 0) < meta.current_version);
+  let next = 0;
+  // Bounded concurrency avoids both a serial startup waterfall and a burst of
+  // hundreds of simultaneous downloads/decompressions for a large library.
+  await Promise.all(Array.from({ length: Math.min(3, pending.length) }, async () => {
+    while (next < pending.length) {
+      const meta = pending[next++]!;
+      const document = await api.getDesignContent(meta.id, meta.current_version);
+      const design = await hydrateDesignAssets(await decodeDesignDocument(document));
+      pulled.push({
+        ...design,
+        remoteId: meta.id,
+        remoteVersion: meta.current_version,
+        isDeleted: Boolean(meta.trashed_at),
+        deletedAt: meta.trashed_at ?? undefined,
+        updatedAt: Math.max(design.updatedAt, meta.updated_at * 1000),
+        syncStatus: 'synced',
+      });
+    }
+  }));
   return pulled;
 }

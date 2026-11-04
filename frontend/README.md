@@ -41,15 +41,37 @@ npm run dev
 npm run build
 ```
 
-## PhotoCraft Creative Mode
+To run the frontend, backend and persistent local database together, run
+`./run-project.sh` from the repository root and open `http://127.0.0.1:3000`.
 
-Creative Mode is rendered by PhotoCraft's Rust/egui WebAssembly app. Zenopher
-does not recreate that editor in React. For Cloudflare Pages, package PhotoCraft
-first so the WASM is split below the host's 25 MiB per-file limit:
+## Performance checks
+
+Corporate reviews run in a dedicated Web Worker. The teacher schedules work after
+edits, pauses during gestures and hidden tabs, and stops waking once a review is
+complete. Unchanged layer objects retain their revision without hashing image
+payloads. Secondary screens and the teacher runtime load on demand.
+
+Local writes coalesce for 300 ms (with a two-second maximum during continuous
+editing) and flush when leaving a document or hiding the page. API sync skips
+unchanged remote versions and limits concurrent document downloads to three.
+The PhotoCraft host skips sync during gestures and uses a slower idle fallback;
+asynchronous PhotoCraft commands can therefore take up to 15 seconds to reach
+the outer app while idle.
+
+From `zenopher-backend`, run `npm run test:frontend` for scheduling, persistence,
+sync and real worker/WASM integration regressions, and `npm run benchmark:teacher`
+for repeatable idle checks and full 1,000-shape / 200-text-layer reviews. These checks do not measure browser
+frame rate or GPU-heavy PhotoCraft filters; those still need browser profiling.
+
+## PhotoCraft editor modes
+
+Creative and Corporate modes use PhotoCraft's Rust/egui WebAssembly editor with
+a shared React host menu. Package PhotoCraft before updating the local bundle
+so its boot loader, compressed WASM and generated JavaScript stay matched:
 
 ```bash
 cd ../photocraft-main-2
-packaging/web/package.sh
+CARGO_PROFILE_WASM_RELEASE_LTO=thin packaging/web/package.sh
 rm -rf ../frontend/public/photocraft
 mkdir -p ../frontend/public/photocraft
 unzip -q dist/release/photocraft-web-*.zip -d /tmp/photocraft-package
@@ -58,11 +80,15 @@ cp -R /tmp/photocraft-package/photocraft-web-*/. ../frontend/public/photocraft/
 
 The packaged site includes the boot loader, compressed WASM parts, generated
 glue, and generated eframe snippets at `/photocraft/index.html`. A direct
-`trunk build --release` is suitable for local development or hosts without a
-per-file cap, but should not be copied directly into the Pages deployment.
+`trunk build --release` runs PhotoCraft standalone; the Zenopher iframe uses the
+packaged boot loader and compressed parts.
 
 Then start Zenopher with `npm run dev`. PhotoCraft is intentionally loaded from
 the local `/photocraft/index.html` bundle during development.
+
+The local rebuild uses thin LTO to reduce link time while keeping the release
+optimization levels for drawing and image operations. Omit that environment
+override when producing the smallest distribution bundle with full LTO.
 
 The two apps communicate through a same-origin `postMessage` bridge. Zenopher
 sends `zenopher:open-design` with the `Design` JSON; PhotoCraft replies with
@@ -70,3 +96,30 @@ sends `zenopher:open-design` with the `Design` JSON; PhotoCraft replies with
 `Save .pcraft` control sends `zenopher:save`, and PhotoCraft returns the native
 `.pcraft` bytes as a structured-cloned `Uint8Array` in `photocraft:saved`.
 
+Both editor modes use the shared React Bits PillNav menu bar. With
+`zenopherMenu=pill`, the iframe hides its native menu row. `zenopher:menu-list`
+and `zenopher:menu-invoke` return correlated `photocraft:menu-result` replies
+from the native catalogue and menu dispatcher, preserving command enablement,
+modal restrictions, dialogs, shortcuts, appearance and workspace presets.
+Rebuild the PhotoCraft bundle after changing this protocol; replacing only the
+React source leaves the old WASM unable to answer menu requests.
+
+Safari uses the embedded editor's WebGL2 renderer: the current WebGPU build
+clips its canvas after the first 1024-pixel compositor chunk on Safari. This is
+a display issue; the design dimensions remain intact. Both modes keep the
+design's own width and height, including portrait and landscape presets.
+For a synthetic browser check without opening saved work, visit
+`/test/canvas-preview.html` on the development server. The page can compare
+renderers, sizes and modes and never persists its test document.
+
+
+Teacher fixes use `zenopher:teacher-fix` / `photocraft:teacher-result`. A request carries
+native layer IDs and the last confirmed canvas revision. The editor rejects stale revisions,
+coalesces the existing engine commands into one undo step, and returns confirmed content.
+The worker waits for that response before recording a successful fix. The synthetic local
+`/test/teacher-preview.html` page verifies this path without saving a design.
+
+Both Zenopher modes start with **Show Transform Controls** enabled. Select an object
+with the Move tool (`V`), drag its corner or edge handles, and press Enter to apply
+the transform (Escape cancels). The checkbox in the existing options bar can hide
+the handles when desired.

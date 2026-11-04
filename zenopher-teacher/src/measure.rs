@@ -4,7 +4,16 @@ use crate::color::*;
 use crate::config::Config;
 use crate::finding::{Extra, Unit};
 use crate::model::*;
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
+use std::collections::HashMap;
+
+/// Reused across slices of one immutable review; discarded after every edit.
+#[derive(Default)]
+pub struct MeasurementCache {
+    colours: OnceCell<Option<ColourStats>>,
+    hierarchy: OnceCell<Option<(f64, usize)>>,
+    contrast_fixes: RefCell<HashMap<[u32; 9], Option<Color>>>,
+}
 
 /// Everything a rule may read. Rules never touch the live editor.
 pub struct Env<'a> {
@@ -13,6 +22,7 @@ pub struct Env<'a> {
     pub renderer: &'a dyn Renderer,
     pub bg: &'a RefCell<BgCache>,
     pub objects: Vec<&'a Layer>,
+    pub measurements: &'a MeasurementCache,
 }
 
 impl<'a> Env<'a> {
@@ -21,6 +31,7 @@ impl<'a> Env<'a> {
         cfg: &'a Config,
         renderer: &'a dyn Renderer,
         bg: &'a RefCell<BgCache>,
+        measurements: &'a MeasurementCache,
     ) -> Self {
         Env {
             snap,
@@ -28,6 +39,7 @@ impl<'a> Env<'a> {
             renderer,
             bg,
             objects: snap.objects(),
+            measurements,
         }
     }
     pub fn text_layers(&self) -> Vec<&'a Layer> {
@@ -49,6 +61,15 @@ impl<'a> Env<'a> {
             .copied()
             .filter(|l| !self.snap.is_background(l))
             .collect()
+    }
+    pub fn contrast_fix(&self, fg: Color, opacity: f32, bg: Color, target: f32) -> Option<Color> {
+        let key = [fg.r, fg.g, fg.b, fg.a, opacity, bg.r, bg.g, bg.b, target].map(f32::to_bits);
+        *self
+            .measurements
+            .contrast_fixes
+            .borrow_mut()
+            .entry(key)
+            .or_insert_with(|| find_contrast_fix(fg, opacity, bg, target))
     }
     pub fn background(&self, l: &Layer) -> BgSample {
         let stamp = stamp(self.snap, l);
@@ -98,15 +119,43 @@ pub fn measure(id: &str, env: &Env) -> Option<Measurement> {
         })
     };
     match id {
-        "colour.families" => colour_stats(env).and_then(|s| m(s.families as f64, 1.0)),
-        "colour.dominant_share" => colour_stats(env).and_then(|s| m(s.dominant, 1.0)),
-        "colour.neutral_share" => colour_stats(env).and_then(|s| m(s.neutral, 1.0)),
-        "colour.accent_share" => colour_stats(env).and_then(|s| m(s.accent, 1.0)),
+        "colour.families" => env
+            .measurements
+            .colours
+            .get_or_init(|| colour_stats(env))
+            .as_ref()
+            .and_then(|s| m(s.families as f64, 1.0)),
+        "colour.dominant_share" => env
+            .measurements
+            .colours
+            .get_or_init(|| colour_stats(env))
+            .as_ref()
+            .and_then(|s| m(s.dominant, 1.0)),
+        "colour.neutral_share" => env
+            .measurements
+            .colours
+            .get_or_init(|| colour_stats(env))
+            .as_ref()
+            .and_then(|s| m(s.neutral, 1.0)),
+        "colour.accent_share" => env
+            .measurements
+            .colours
+            .get_or_init(|| colour_stats(env))
+            .as_ref()
+            .and_then(|s| m(s.accent, 1.0)),
         "shape.geometric_share" => geometric_share(env).and_then(|v| m(v, 1.0)),
         "grid.edge_share" => grid_edge_share(env).and_then(|v| m(v, 1.0)),
         "balance.asymmetry" => balance(env),
-        "hierarchy.ratio" => hierarchy(env).and_then(|(r, _)| m(r, 1.0)),
-        "text.count_sizes" => hierarchy(env).and_then(|(_, n)| m(n as f64, 1.0)),
+        "hierarchy.ratio" => env
+            .measurements
+            .hierarchy
+            .get_or_init(|| hierarchy(env))
+            .and_then(|(r, _)| m(r, 1.0)),
+        "text.count_sizes" => env
+            .measurements
+            .hierarchy
+            .get_or_init(|| hierarchy(env))
+            .and_then(|(_, n)| m(n as f64, 1.0)),
         _ => None,
     }
 }
@@ -130,6 +179,12 @@ pub fn colour_stats(env: &Env) -> Option<ColourStats> {
     let mut cells: Vec<Option<Color>> = vec![Some(env.snap.page.background.with_alpha(1.0)); N * N];
     for l in &env.objects {
         let paint = match (l.kind, l.fill) {
+            (LayerKind::Shape, _) if l.shape == Some(ShapeKind::Line) => continue,
+            (LayerKind::Shape, _)
+                if matches!(l.shape, Some(ShapeKind::Polygon | ShapeKind::Path)) =>
+            {
+                None
+            }
             (LayerKind::Shape, Some(f)) => Some(f.with_alpha(f.a * l.opacity)),
             (LayerKind::Image, _) => None,
             _ => continue,
@@ -155,6 +210,7 @@ pub fn colour_stats(env: &Env) -> Option<ColourStats> {
                 let i = gy * N + gx;
                 cells[i] = match (paint, cells[i]) {
                     (Some(p), Some(under)) => Some(composite(p, under)),
+                    (Some(p), None) if p.a >= 1.0 => Some(p.with_alpha(1.0)),
                     (Some(_), None) => cells[i],
                     (None, _) => None,
                 };
@@ -176,7 +232,7 @@ pub fn colour_stats(env: &Env) -> Option<ColourStats> {
     let mut idx: Vec<usize> = (0..lch.len())
         .filter(|&i| lch[i].is_some_and(|c| c.c >= cc.chroma_neutral))
         .collect();
-    idx.sort_by(|&a, &b| lch[a].unwrap().h.partial_cmp(&lch[b].unwrap().h).unwrap());
+    idx.sort_by(|&a, &b| lch[a].unwrap().h.total_cmp(&lch[b].unwrap().h));
     let mut cluster_of = vec![usize::MAX; lch.len()];
     let mut n_clusters = 0usize;
     for (k, &i) in idx.iter().enumerate() {
@@ -254,27 +310,34 @@ fn grid_edge_share(env: &Env) -> Option<f64> {
         return None;
     }
     let tol = 0.005 * env.snap.page.short_side();
-    let (mut shared, mut total) = (0u32, 0u32);
-    for (i, a) in objs.iter().enumerate() {
-        let xs = |l: &Layer| [l.bounds.x, l.bounds.right()];
-        let ys = |l: &Layer| [l.bounds.y, l.bounds.bottom()];
-        for (edges, other) in [
-            (xs(a), xs as fn(&Layer) -> [f32; 2]),
-            (ys(a), ys as fn(&Layer) -> [f32; 2]),
-        ] {
-            for e in edges {
-                total += 1;
-                if objs
-                    .iter()
-                    .enumerate()
-                    .any(|(j, b)| j != i && other(b).iter().any(|o| (o - e).abs() <= tol))
-                {
-                    shared += 1;
+    let mut shared = 0;
+    for horizontal in [true, false] {
+        let mut edges: Vec<(f32, usize)> = objs
+            .iter()
+            .enumerate()
+            .flat_map(|(i, l)| {
+                let b = l.bounds;
+                if horizontal {
+                    [(b.x, i), (b.right(), i)]
+                } else {
+                    [(b.y, i), (b.bottom(), i)]
                 }
+            })
+            .collect();
+        edges.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+        for (k, &(value, owner)) in edges.iter().enumerate() {
+            // Each object has only two edges on this axis. Skipping our own other
+            // edge examines at most two neighbours in either direction.
+            let before = edges[..k].iter().rev().find(|e| e.1 != owner);
+            let after = edges[k + 1..].iter().find(|e| e.1 != owner);
+            if before.is_some_and(|e| (value - e.0).abs() <= tol)
+                || after.is_some_and(|e| (value - e.0).abs() <= tol)
+            {
+                shared += 1;
             }
         }
     }
-    Some(shared as f64 / total as f64)
+    Some(shared as f64 / (objs.len() * 4) as f64)
 }
 
 /// Visual-weight centroid and its distance from the page centre, scaled so a corner is 1.
@@ -326,8 +389,12 @@ fn hierarchy(env: &Env) -> Option<(f64, usize)> {
     let mut sizes: Vec<f32> = texts
         .iter()
         .map(|l| (l.text.as_ref().unwrap().size_px * 2.0).round() / 2.0)
+        .filter(|size| size.is_finite() && *size > 0.0)
         .collect();
-    sizes.sort_by(|a, b| b.partial_cmp(a).unwrap());
+    if sizes.is_empty() {
+        return None;
+    }
+    sizes.sort_by(|a, b| b.total_cmp(a));
     sizes.dedup();
     let ratio = if sizes.len() >= 2 {
         (sizes[0] / sizes[1]) as f64

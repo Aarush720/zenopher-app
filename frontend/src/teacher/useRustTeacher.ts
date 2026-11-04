@@ -1,13 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Design, Layer, ReviewFinding } from '../types';
 import { renderDesignToPng } from '../services/render';
-import initTeacherWasm, { WasmTeacher } from './generated/zenopher_teacher';
+import type { WasmTeacher } from './generated/zenopher_teacher';
 import { TeacherBridge } from '../../../zenopher-teacher/web/src/teacher/bridge';
 import { CatalogSync } from '../../../zenopher-teacher/web/src/teacher/catalogSync';
 import { EventRecorder } from '../../../zenopher-teacher/web/src/teacher/eventRecorder';
-import type { Command, FindingView, TeacherHost } from '../../../zenopher-teacher/web/src/teacher/types';
+import type { FindingView, TeacherHost } from '../../../zenopher-teacher/web/src/teacher/types';
+import { teacherPaint } from './reviewPaint';
+import { WorkerTeacherBridge } from './WorkerTeacherBridge';
+import type { RunTeacherCommands } from '../components/editor/teacherCommands';
+import { layerRevision as stableLayerVersion } from '../services/designState';
 
 const ACCESS_TOKEN_KEY = 'zenopher_access_token';
+let teacherModule: Promise<typeof import('./generated/zenopher_teacher')> | null = null;
+function loadTeacher() {
+  if (!teacherModule) {
+    teacherModule = import('./generated/zenopher_teacher').then(async (module) => {
+      await module.default();
+      return module;
+    });
+    void teacherModule.catch(() => { teacherModule = null; });
+  }
+  return teacherModule;
+}
 
 type RustColor = { r: number; g: number; b: number; a: number };
 type RustFinding = FindingView['finding'];
@@ -33,56 +48,6 @@ function colorFromHex(value: string | undefined): RustColor {
   };
 }
 
-function colorToHex(color: RustColor): string {
-  const channel = (value: number) => Math.max(0, Math.min(255, Math.round(value * 255))).toString(16).padStart(2, '0');
-  return `#${channel(color.r)}${channel(color.g)}${channel(color.b)}`.toUpperCase();
-}
-
-function stableLayerVersion(layer: Layer): number {
-  const source = JSON.stringify({
-    id: layer.id,
-    type: layer.type,
-    x: Math.round(layer.x * 100) / 100,
-    y: Math.round(layer.y * 100) / 100,
-    width: Math.round(layer.width * 100) / 100,
-    height: Math.round(layer.height * 100) / 100,
-    rotation: layer.rotation ?? 0,
-    visible: layer.visible,
-    opacity: layer.opacity,
-    fill: layer.fill,
-    stroke: layer.stroke,
-    strokeWidth: layer.strokeWidth,
-    borderRadius: layer.borderRadius,
-    text: layer.text,
-    fontSize: layer.fontSize,
-    fontFamily: layer.fontFamily,
-    fontWeight: layer.fontWeight,
-    lineHeight: layer.lineHeight,
-    letterSpacing: layer.letterSpacing,
-    textAlign: layer.textAlign,
-    imageUrl: layer.imageUrl,
-  });
-  let hash = 2166136261;
-  for (let index = 0; index < source.length; index += 1) {
-    hash ^= source.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-}
-
-function layerKind(layer: Layer): 'text' | 'shape' | 'image' | 'group' {
-  if (layer.type === 'text') return 'text';
-  if (layer.type === 'image') return 'image';
-  return 'shape';
-}
-
-function shapeKind(layer: Layer): 'rect' | 'ellipse' | 'line' | 'polygon' | 'path' | undefined {
-  if (layer.type === 'circle') return 'ellipse';
-  if (layer.type === 'triangle' || layer.type === 'star') return 'polygon';
-  if (layer.type === 'frame' || layer.type === 'rect') return 'rect';
-  return undefined;
-}
-
 function toPx(value: number, unit: Design['unit']): number {
   if (!Number.isFinite(value)) return 0;
   if (unit === 'mm') return value * (96 / 25.4);
@@ -91,26 +56,39 @@ function toPx(value: number, unit: Design['unit']): number {
 }
 
 const imageNaturalSizeCache = new Map<string, { w: number; h: number }>();
+const pendingImageSizes = new Set<string>();
+let activeImageSources = new Set<string>();
 
-function preloadImageSizes(layers: Layer[]): void {
+function preloadImageSizes(layers: Layer[], onReady: () => void): void {
   if (typeof Image === 'undefined') return;
+  activeImageSources = new Set(layers.flatMap((layer) => layer.type === 'image' && layer.imageUrl ? [layer.imageUrl] : []));
+  for (const url of imageNaturalSizeCache.keys()) {
+    if (!activeImageSources.has(url)) imageNaturalSizeCache.delete(url);
+  }
   for (const layer of layers) {
     if (layer.type !== 'image' || !layer.imageUrl) continue;
     if (imageNaturalSizeCache.has(layer.imageUrl)) continue;
     const url = layer.imageUrl;
+    if (pendingImageSizes.has(url)) continue;
+    pendingImageSizes.add(url);
     const img = new Image();
     img.onload = () => {
+      pendingImageSizes.delete(url);
       const w = img.naturalWidth || 0;
       const h = img.naturalHeight || 0;
-      if (w > 0 && h > 0) imageNaturalSizeCache.set(url, { w, h });
+      if (w > 0 && h > 0 && activeImageSources.has(url)) {
+        imageNaturalSizeCache.set(url, { w, h });
+        onReady();
+      }
     };
-    img.onerror = () => undefined;
+    img.onerror = () => { pendingImageSizes.delete(url); };
     img.src = url;
   }
 }
 
-function snapshotFor(design: Design, ids: Map<string, number>): string {
+export function snapshotFor(design: Design, ids: Map<string, number>): string {
   const layers = design.layers.map((layer) => {
+    const paint = teacherPaint(layer);
     const numeric = ids.get(layer.id);
     // Never emit id 0: unknown layers get a skipped placeholder that rules ignore
     // via visible=false would hide them — instead assign is handled by caller.
@@ -129,7 +107,7 @@ function snapshotFor(design: Design, ids: Map<string, number>): string {
     const natural = layer.imageUrl ? imageNaturalSizeCache.get(layer.imageUrl) : undefined;
     return {
       id,
-      kind: layerKind(layer),
+      kind: paint.kind,
       bounds: { x, y, w, h },
       visible: layer.visible,
       opacity: layer.opacity,
@@ -144,9 +122,9 @@ function snapshotFor(design: Design, ids: Map<string, number>): string {
         color: colorFromHex(layer.fill),
         lines: estimatedLines,
       } : undefined,
-      fill: layer.type === 'text' ? undefined : colorFromHex(layer.fill),
-      shape: shapeKind(layer),
-      image: layer.type === 'image' ? {
+      fill: paint.fill ? colorFromHex(paint.fill) : undefined,
+      shape: paint.shape,
+      image: paint.kind === 'image' ? {
         source_w: natural?.w ?? 0,
         source_h: natural?.h ?? 0,
         displayed_w: w,
@@ -166,39 +144,6 @@ function snapshotFor(design: Design, ids: Map<string, number>): string {
     mode: design.mode === 'corporate' ? (design.styleId ? 'corporate_full' : 'corporate_base') : 'creative',
     intent: 'screen',
   });
-}
-
-function applyCommands(design: Design, commands: Command[], ids: Map<number, string>): Layer[] {
-  const layers = design.layers.map((layer) => ({ ...layer }));
-  for (const command of commands) {
-    const layerId = ids.get(command.layer);
-    if (!layerId) continue;
-    const layer = layers.find((candidate) => candidate.id === layerId);
-    if (!layer) continue;
-
-    switch (command.type) {
-      case 'set_text_color':
-        layer.fill = colorToHex(command.color);
-        break;
-      case 'set_font_size':
-        layer.fontSize = command.size_px;
-        break;
-      case 'set_leading':
-        layer.lineHeight = command.leading * (layer.fontSize ?? 16);
-        break;
-      case 'set_bounds':
-        layer.x = command.rect.x;
-        layer.y = command.rect.y;
-        layer.width = command.rect.w;
-        layer.height = command.rect.h;
-        break;
-      case 'move_by':
-        layer.x += command.dx;
-        layer.y += command.dy;
-        break;
-    }
-  }
-  return layers;
 }
 
 function formatMeasured(value: number, unit: RustFinding['measured']['unit']): string {
@@ -221,21 +166,28 @@ function formatExpected(expected: RustFinding['expected'], unit: RustFinding['me
 
 function categoryFor(rule: string): ReviewFinding['category'] {
   if (rule === 'contrast') return 'contrast';
+  if (rule === 'text.hidden') return 'overlap';
   if (rule === 'text_size' || rule === 'leading' || rule.startsWith('hierarchy.') || rule.startsWith('text.')) return 'text-size';
   if (rule === 'alignment' || rule.startsWith('grid.')) return 'alignment';
-  if (rule === 'spacing' || rule === 'tangency' || rule === 'overlap') return 'spacing';
+  if (rule === 'overlap') return 'overlap';
+  if (rule === 'spacing' || rule === 'tangency') return 'spacing';
   if (rule === 'distortion' || rule.startsWith('print.')) return 'crop';
   return 'style-consistency';
 }
 
 function toReviewFinding(view: FindingView, ids: Map<number, string>): ReviewFinding {
   const { finding } = view;
+  const currentValue = formatMeasured(finding.measured.value, finding.measured.unit);
+  const requiredValue = formatExpected(finding.expected, finding.measured.unit);
   return {
     id: view.key,
+    rule: finding.rule,
+    measured: currentValue,
+    expected: requiredValue,
     category: categoryFor(finding.rule),
     title: view.message,
-    currentValue: formatMeasured(finding.measured.value, finding.measured.unit),
-    requiredValue: formatExpected(finding.expected, finding.measured.unit),
+    currentValue,
+    requiredValue,
     explanation: view.explanation,
     fixActionLabel: finding.fix?.safety === 'safe' ? 'Apply teacher fix' : 'Review manually',
     layerId: finding.layers.length > 0 ? ids.get(finding.layers[0]!) : undefined,
@@ -299,17 +251,20 @@ export function useRustTeacher(
   learningConsent: boolean,
   onDesignChange: (updates: Partial<Design>) => void,
   onSelectLayers: (ids: string[]) => void,
+  runEditorCommands: RunTeacherCommands,
 ): RustTeacherState {
   const designRef = useRef<Design | null>(design);
   const onDesignChangeRef = useRef(onDesignChange);
   const onSelectLayersRef = useRef(onSelectLayers);
-  const bridgeRef = useRef<TeacherBridge | null>(null);
-  const recorderRef = useRef<EventRecorder | null>(null);
+  const runEditorCommandsRef = useRef(runEditorCommands);
+  const bridgeRef = useRef<TeacherBridge | WorkerTeacherBridge | null>(null);
+  const recorderRef = useRef<Pick<EventRecorder, 'stop' | 'setConsent'> | null>(null);
+  const gestureActiveRef = useRef(false);
   const numericToLayerRef = useRef(new Map<number, string>());
   const layerToNumericRef = useRef(new Map<string, number>());
   const nextNumericIdRef = useRef(1);
   const layerSigRef = useRef(new Map<string, number>());
-  const prevSigRef = useRef('');
+  const previousPageRef = useRef('');
   const [findings, setFindings] = useState<ReviewFinding[]>(() => {
     try {
       const raw = design?.id ? localStorage.getItem(`teacher:findings:${design.id}`) : null;
@@ -333,21 +288,34 @@ export function useRustTeacher(
   const [styleMessage, setStyleMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [bridgeVersion, setBridgeVersion] = useState(0);
+  const learningConsentRef = useRef(learningConsent);
+  learningConsentRef.current = learningConsent;
 
   // Keep refs current without recreating the host/bridge.
   useEffect(() => {
     designRef.current = design;
     onDesignChangeRef.current = onDesignChange;
     onSelectLayersRef.current = onSelectLayers;
-    if (!design) return;
-    preloadImageSizes(design.layers);
+    runEditorCommandsRef.current = runEditorCommands;
+  });
+
+  useEffect(() => {
+    if (!design || design.mode !== 'corporate') return;
+    preloadImageSizes(design.layers, () => {
+      if (designRef.current?.id === design.id) bridgeRef.current?.onChange([], true);
+    });
+    const present = new Set(design.layers.map((layer) => layer.id));
+    for (const [id, numeric] of layerToNumericRef.current) {
+      if (!present.has(id)) { layerToNumericRef.current.delete(id); numericToLayerRef.current.delete(numeric); }
+    }
     for (const layer of design.layers) {
       if (layerToNumericRef.current.has(layer.id)) continue;
       const numeric = nextNumericIdRef.current++;
       layerToNumericRef.current.set(layer.id, numeric);
       numericToLayerRef.current.set(numeric, layer.id);
     }
-  });
+  }, [design?.layers, design?.id, design?.mode]);
 
   const hostRef = useRef<TeacherHost | null>(null);
   if (!hostRef.current) {
@@ -357,13 +325,14 @@ export function useRustTeacher(
         const current = designRef.current;
         return current ? snapshotFor(current, layerToNumericRef.current) : '';
       },
-      runCommands: (commands) => {
+      runCommands: async (commands) => {
         const current = designRef.current;
-        if (!current) return;
-        const layers = applyCommands(current, commands, numericToLayerRef.current);
-        // Apply synchronously to the ref so the next pump sees fixed values.
-        designRef.current = { ...current, layers, updatedAt: Date.now() };
-        onDesignChangeRef.current({ layers });
+        if (!current) throw new Error('No design is open.');
+        const updates = await runEditorCommandsRef.current(commands, numericToLayerRef.current);
+        const latest = designRef.current;
+        if (latest?.id !== current.id) return;
+        designRef.current = { ...latest, ...updates, updatedAt: Date.now() };
+        onDesignChangeRef.current(updates);
         // Tell the engine exactly what changed so it can re-run immediately.
         const touched = new Set<number>();
         for (const c of commands) {
@@ -382,13 +351,15 @@ export function useRustTeacher(
     };
   }
   const host = hostRef.current;
-  const wasmRef = useRef<WasmTeacher | null>(null);
   const initedRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    let ownedBridge: TeacherBridge | WorkerTeacherBridge | null = null;
+    let ownedWasm: WasmTeacher | null = null;
+    let unsubscribe: (() => void) | undefined;
+    gestureActiveRef.current = false;
     const designId = design?.id ?? null;
-    const styleId = design?.styleId ?? null;
     if (!designId || design?.mode !== 'corporate' || !design) {
       bridgeRef.current?.stop();
       recorderRef.current?.stop();
@@ -397,9 +368,6 @@ export function useRustTeacher(
       initedRef.current = null;
       setLoading(false);
       if (!designId) { setFindings([]); setUnavailable([]); setStyleMessage(null); }
-      return () => { cancelled = true; };
-    }
-    if (initedRef.current === designId && bridgeRef.current) {
       return () => { cancelled = true; };
     }
     layerToNumericRef.current = new Map();
@@ -411,10 +379,7 @@ export function useRustTeacher(
       numericToLayerRef.current.set(numeric, layer.id);
     }
     layerSigRef.current = new Map(design.layers.map((l) => [l.id, stableLayerVersion(l)]));
-    prevSigRef.current = JSON.stringify({
-      layers: [...layerSigRef.current.entries()].sort(),
-      w: design.width, h: design.height, bg: design.background,
-    });
+    previousPageRef.current = JSON.stringify([design.width, design.height, design.unit, design.background]);
     const persisted = loadPersisted(designId);
     if (persisted) { setFindings(persisted.findings); setUnavailable(persisted.unavailable); }
     else { setFindings([]); setUnavailable([]); }
@@ -422,54 +387,43 @@ export function useRustTeacher(
     setError(null);
     const apiRoot = apiBaseUrl.replace(/\/$/, '');
     const catalog = new CatalogSync(`${apiRoot}/v1`, authorizedFetch);
-    const recorder = new EventRecorder(`${apiRoot}/v1`, authorizedFetch);
+    let recorder: EventRecorder | null = null;
 
     const start = async () => {
       setLoading(true);
-      await initTeacherWasm();
-      if (cancelled) return;
-      const wasm = new WasmTeacher('');
-      wasmRef.current = wasm;
-      const bridge = new TeacherBridge(wasm, host, recorder, catalog);
-      bridge.subscribe((state) => {
+      let bridge: TeacherBridge | WorkerTeacherBridge;
+      if (typeof Worker !== 'undefined') {
+        bridge = new WorkerTeacherBridge(host, `${apiRoot}/v1`, learningConsentRef.current);
+      } else {
+        const { WasmTeacher: Teacher } = await loadTeacher();
+        if (cancelled) return;
+        const wasm = new Teacher('');
+        ownedWasm = wasm;
+        recorder = new EventRecorder(`${apiRoot}/v1`, authorizedFetch);
+        bridge = new TeacherBridge(wasm, host, recorder, catalog);
+      }
+      ownedBridge = bridge;
+      unsubscribe = bridge.subscribe((state) => {
         if (cancelled) return;
         const mapped = state.findings.map((view) => toReviewFinding(view, numericToLayerRef.current));
+        setError(null);
         setFindings(mapped);
         setUnavailable(state.unavailable);
         persistFindings(designId, mapped, state.unavailable);
       });
-      await recorder.start(learningConsent);
+      await recorder?.start(learningConsentRef.current);
+      if (cancelled) return;
       await bridge.start();
-      if (cancelled) { bridge.stop(); return; }
+      if (cancelled) return;
       bridgeRef.current = bridge;
-      recorderRef.current = recorder;
+      recorderRef.current = recorder ?? bridge as WorkerTeacherBridge;
       initedRef.current = designId;
-      bridge.setLevel(styleId ? 'corporate_full' : 'corporate_base');
-      if (styleId) {
-        try {
-          const { entries } = await catalog.index();
-          if (cancelled) return;
-          const entry = entries.find((c) => c.id === styleId);
-          if (!entry) {
-            bridge.setStyle(null);
-            if (!cancelled) setStyleMessage('This style is not in the catalog. Showing base checks.');
-          } else {
-            const res = await bridge.setStyle({ id: entry.id, version: entry.version });
-            if (cancelled) return;
-            if (res.ok) setStyleMessage(null);
-            else if (res.reason === 'not_downloaded') setStyleMessage('Style not downloaded. Connect to load it.');
-            else if (res.reason === 'not_found') setStyleMessage('This style version cannot be loaded. Choose another style.');
-            else setStyleMessage('This style needs an app update.');
-          }
-        } catch {
-          if (!cancelled) { bridge.setStyle(null); setStyleMessage('Style not downloaded. Connect to load it.'); }
-        }
-      } else {
-        bridge.setStyle(null);
-      }
+      if (gestureActiveRef.current) bridge.gestureStart();
+      bridge.setLevel(designRef.current?.styleId ? 'corporate_full' : 'corporate_base');
       const d = designRef.current;
       if (d) bridge.onChange(d.layers.map((l) => layerToNumericRef.current.get(l.id)!).filter(Boolean), true);
       if (!cancelled) setLoading(false);
+      setBridgeVersion((version) => version + 1);
     };
 
     void start().catch((reason) => {
@@ -478,13 +432,45 @@ export function useRustTeacher(
       setError(reason instanceof Error ? reason.message : 'The teacher could not be loaded.');
     });
 
-    return () => { cancelled = true; };
-  }, [apiBaseUrl, design?.id, design?.mode, design?.styleId, learningConsent]);
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+      ownedBridge?.stop();
+      recorder?.stop();
+      ownedWasm?.free();
+      if (bridgeRef.current === ownedBridge) {
+        bridgeRef.current = null;
+        recorderRef.current = null;
+        initedRef.current = null;
+      }
+    };
+  }, [apiBaseUrl, design?.id, design?.mode]);
 
-  useEffect(() => () => {
-    bridgeRef.current?.stop();
-    recorderRef.current?.stop();
-  }, []);
+  useEffect(() => {
+    void recorderRef.current?.setConsent(learningConsent).catch(() => {});
+  }, [learningConsent, bridgeVersion]);
+
+  useEffect(() => {
+    const bridge = bridgeRef.current;
+    if (!bridge || design?.mode !== 'corporate') return;
+    let cancelled = false;
+    const styleId = design.styleId;
+    const catalog = new CatalogSync(`${apiBaseUrl.replace(/\/$/, '')}/v1`, authorizedFetch);
+    bridge.setLevel(styleId ? 'corporate_full' : 'corporate_base');
+    // Clear the old profile immediately while a new profile is loading.
+    void bridge.setStyle(null).catch(() => {});
+    setStyleMessage(null);
+    if (styleId) void (async () => {
+      const { entries } = await catalog.index();
+      if (cancelled) return;
+      const entry = entries.find((candidate) => candidate.id === styleId);
+      if (!entry) { setStyleMessage('This style is not in the catalog. Showing base checks.'); return; }
+      const result = await bridge.setStyle({ id: entry.id, version: entry.version });
+      if (cancelled || result.ok) return;
+      setStyleMessage(result.reason === 'needs_update' ? 'This style needs an app update.' : 'Style not downloaded. Connect to load it.');
+    })().catch(() => { if (!cancelled) setStyleMessage('Style not downloaded. Connect to load it.'); });
+    return () => { cancelled = true; };
+  }, [apiBaseUrl, design?.id, design?.mode, design?.styleId, bridgeVersion]);
 
   useEffect(() => {
     const bridge = bridgeRef.current;
@@ -492,11 +478,7 @@ export function useRustTeacher(
     if (initedRef.current !== design.id) return;
     const sigs = new Map<string, number>();
     for (const layer of design.layers) sigs.set(layer.id, stableLayerVersion(layer));
-    const sig = JSON.stringify({
-      layers: [...sigs.entries()].sort(),
-      w: design.width, h: design.height, bg: design.background,
-    });
-    if (sig === prevSigRef.current) return;
+    const page = JSON.stringify([design.width, design.height, design.unit, design.background]);
     const prev = layerSigRef.current;
     const changed: number[] = [];
     for (const [id, v] of sigs) {
@@ -505,32 +487,45 @@ export function useRustTeacher(
         if (n) changed.push(n);
       }
     }
-    const pageChanged = sigs.size !== prev.size;
+    // Deletions, reordered layers and unit changes affect page-wide rules too.
+    const previousIds = [...prev.keys()];
+    const pageChanged = page !== previousPageRef.current || sigs.size !== prev.size || [...sigs.keys()].some((id, index) => id !== previousIds[index]);
+    if (!pageChanged && changed.length === 0) return;
     layerSigRef.current = sigs;
-    prevSigRef.current = sig;
+    previousPageRef.current = page;
     bridge.onChange(changed, pageChanged || changed.length === 0);
-  });
+  }, [design?.layers, design?.width, design?.height, design?.unit, design?.background, design?.id, design?.mode, bridgeVersion]);
 
   const applyFix = useCallback(async (finding: ReviewFinding) => {
-    await bridgeRef.current?.apply(finding.id);
+    const bridge = bridgeRef.current;
+    setError(null);
+    try { await bridge?.apply(finding.id); }
+    catch (reason) { if (bridge === bridgeRef.current) setError(reason instanceof Error ? reason.message : 'The fix could not be applied.'); }
   }, []);
 
   const applyAllFixes = useCallback(async () => {
     const bridge = bridgeRef.current;
     if (!bridge) return;
-    const plan = bridge.planApplyAll();
-    if (plan.fixes.length > 0) await bridge.commitApplyAll(plan);
+    setError(null);
+    try {
+      const plan = await bridge.planApplyAll();
+      if (bridge === bridgeRef.current && plan.fixes.length > 0) await bridge.commitApplyAll(plan);
+    } catch (reason) { if (bridge === bridgeRef.current) setError(reason instanceof Error ? reason.message : 'The fixes could not be applied.'); }
   }, []);
 
   const noteUndo = useCallback(async () => {
-    await bridgeRef.current?.onUndo();
+    const bridge = bridgeRef.current;
+    try { await bridge?.onUndo(); }
+    catch (reason) { if (bridge === bridgeRef.current) setError(reason instanceof Error ? reason.message : 'The undo signal could not be recorded.'); }
   }, []);
 
   const gestureStart = useCallback(() => {
+    gestureActiveRef.current = true;
     bridgeRef.current?.gestureStart();
   }, []);
 
   const gestureEnd = useCallback(() => {
+    gestureActiveRef.current = false;
     bridgeRef.current?.gestureEnd();
   }, []);
 

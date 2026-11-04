@@ -21,22 +21,35 @@ const disabled = () => new ApiError(503, "feature_disabled", "Design review is n
 
 export async function critiqueAvailable(env: Env): Promise<boolean> {
   const s = settings(env);
-  return s.critiqueEnabled && !!env.MUSE_API_URL && !!env.MUSE_API_KEY && (await remaining(env.DB)) >= s.costPerReview;
+  if (env.LOCAL_DEMO_CRITIQUE === "true") return true;
+  if (!s.critiqueEnabled) return false;
+  return !!env.MUSE_API_URL && !!env.MUSE_API_KEY && (await remaining(env.DB)) >= s.costPerReview;
 }
 
 export function critiqueRoutes(app: Hono<AppEnv>) {
   app.post("/v1/critique", async (c) => {
     route(c, "POST /v1/critique");
     const s = settings(c.env);
+    // Local demo: explicit configuration only, never a silent fallback.
+    // When LOCAL_DEMO_CRITIQUE=true and no MUSE_API_KEY is set, return a
+    // clearly labelled mock built from the submitted findings.
+    const localDemo = c.env.LOCAL_DEMO_CRITIQUE === "true";
+    const museConfigured = !!c.env.MUSE_API_URL && !!c.env.MUSE_API_KEY;
     // 2. session, verified email, consent, daily limit, feature flag, then the image itself.
-    const u = await authenticate(c); mustBeActive(u);
-    if (!u.verified) throw new ApiError(403, "email_not_verified", "Verify your email to use design review.");
-    if (!(await hasConsent(c.env.DB, u.id, "critique"))) throw new ApiError(403, "consent_required", "Design review needs your permission first.");
+    // In local demo mode the gate is the explicit config flag, not sign-in.
+    // When a real key is present locally we still skip sign-in so localhost can call Muse.
+    // Demo gets a generous local quota so a live walkthrough never hits 429.
+    const effectiveDailyLimit = localDemo ? 1000 : s.critiqueDailyLimit;
+    const u = localDemo ? null : await authenticate(c).then((x) => { mustBeActive(x); return x; });
+    if (u) {
+      if (!u.verified) throw new ApiError(403, "email_not_verified", "Verify your email to use design review.");
+      if (!(await hasConsent(c.env.DB, u.id, "critique"))) throw new ApiError(403, "consent_required", "Design review needs your permission first.");
+    }
     if (!s.critiqueEnabled) throw disabled();
-    const userHash = await hashId(c.env, u.id);
+    const userHash = u ? await hashId(c.env, u.id) : "local-demo";
     const dayKey = `critique:day:${userHash}`;
-    if ((await rateCount(c.env.DB, dayKey, 86400)) >= s.critiqueDailyLimit) throw new ApiError(429, "daily_limit", `You can request ${s.critiqueDailyLimit} reviews a day.`);
-    await rateLimit(c.env.DB, `critique:min:${userHash}`, 6, 60); // blunt guard against hammering, cache hits included
+    if (u && (await rateCount(c.env.DB, dayKey, 86400)) >= effectiveDailyLimit) throw new ApiError(429, "daily_limit", `You can request ${effectiveDailyLimit} reviews a day.`);
+    if (u) await rateLimit(c.env.DB, `critique:min:${userHash}`, 6, 60); // blunt guard against hammering, cache hits included
 
     const declared = Number(c.req.header("content-length") ?? "0");
     if (!declared || declared > s.maxCritiqueImageBytes + 65536) throw new ApiError(413, "too_large", "The image is too large.");
@@ -51,6 +64,19 @@ export function critiqueRoutes(app: Hono<AppEnv>) {
     let meta: CritiqueMeta;
     try { meta = critiqueMeta.parse(JSON.parse(metaRaw)); } catch { throw badRequest("bad_request", "The review details are not valid."); }
     const rules = meta.findings.map((f) => f.rule);
+
+    // Explicit local demo fallback: labelled mock from the submitted findings.
+    if (localDemo && !museConfigured) {
+      const names = [...new Set(rules)].slice(0, 6);
+      const summary = `DEMO MOCK — Local review without Muse. ${meta.findings.length} finding(s) measured${meta.page.style_name ? ` against ${meta.page.style_name}` : ""}.`;
+      const points = names.slice(0, 4).map((rule) => ({
+        area: "readability" as const,
+        agrees_with: [rule],
+        comment: `Measured finding: ${rule}. Adjust and re-run the checks.`,
+      }));
+      const text = JSON.stringify({ summary, points: points.length > 0 ? points : [{ area: "readability", agrees_with: [], comment: "No findings measured." }] });
+      return c.json({ text, cached: false, demo: true });
+    }
 
     // 3. A cache hit returns stored text and costs nothing.
     const imageHash = await sha256Hex(image);
@@ -67,7 +93,7 @@ export function critiqueRoutes(app: Hono<AppEnv>) {
       if (!(await reserve(c.env.DB, requestId, userHash, s.costPerReview))) throw disabled();
       if (!counted) {
         counted = true;
-        try { await rateLimit(c.env.DB, dayKey, s.critiqueDailyLimit, 86400); }
+        try { await rateLimit(c.env.DB, dayKey, effectiveDailyLimit, 86400); }
         catch (e) { await settle(c.env.DB, requestId, s.costPerReview, 0, "released"); throw e; }
       }
       try {

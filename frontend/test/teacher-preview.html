@@ -1,0 +1,42 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Teacher canvas regression</title>
+<style>html,body{margin:0;height:100%;background:#111;color:#eee;font:14px system-ui}body{display:flex;flex-direction:column}header{padding:16px;display:flex;align-items:center;gap:16px}button{padding:8px 16px}iframe{flex:1;width:100%;border:0}</style></head>
+<body><header><strong>Teacher canvas regression — synthetic, never saved</strong><button id="apply" disabled>Apply teacher fixes</button><span id="status" role="status">Loading…</span></header><iframe title="Synthetic teacher canvas" allow="webgpu"></iframe>
+<script type="module">
+import init,{WasmTeacher} from '../src/teacher/generated/zenopher_teacher.js';
+import {CanvasTeacherClient} from '../src/components/editor/teacherCommands.ts';
+import {needsPhotoCraftWebGl} from '../src/components/editor/photocraftRuntime.ts';
+await init();const teacher=new WasmTeacher('');teacher.set_level('corporate_base');
+const frame=document.querySelector('iframe'),status=document.querySelector('#status'),button=document.querySelector('button');
+const post=m=>frame.contentWindow.postMessage(m,location.origin);
+let design={id:'teacher-regression',title:'Teacher test',width:1080,height:1080,unit:'px',mode:'corporate',background:'#ffffff',layers:[{id:'test-title',name:'Test title',type:'text',x:100,y:100,width:500,height:80,text:'Teacher fixes this live canvas',fontSize:12,fill:'#dddddd'}]};
+const client=new CanvasTeacherClient(post);let ids=new Map();
+const color=hex=>{const s=hex.replace('#','');return {r:parseInt(s.slice(0,2),16)/255,g:parseInt(s.slice(2,4),16)/255,b:parseInt(s.slice(4,6),16)/255,a:1};};
+function review(){
+ ids=new Map(design.layers.map((l,i)=>[i+1,l.id]));
+ const snapshot=JSON.stringify({page:{width_px:1080,height_px:1080,background:color('#ffffff')},mode:'corporate_base',intent:'screen',layers:design.layers.map((l,i)=>({id:i+1,kind:'text',bounds:{x:l.x,y:l.y,w:l.width,h:l.height},visible:l.visible,opacity:l.opacity,version:design.editorRevision,text:{content:l.text,size_px:l.fontSize,leading:1.2,lines:1,color:color(l.fill)}}))});
+ teacher.on_change(new Uint32Array([...ids.keys()]),true,0);teacher.run();
+ for(let i=0;i<20&&teacher.next_pump_delay(1000)===0;i++)teacher.pump(snapshot,1000);
+ return JSON.parse(teacher.findings());
+}
+window.addEventListener('message',event=>{
+ if(event.source!==frame.contentWindow||event.origin!==location.origin||event.data?.source!=='photocraft')return;
+ const m=event.data;
+ if(m.type==='photocraft:ready')post({source:'zenopher',type:'zenopher:open-design',requestId:'open-teacher-test',design});
+ if(m.type==='photocraft:opened')post({source:'zenopher',type:'zenopher:sync',requestId:'teacher-initial-sync'});
+ if(m.type==='photocraft:changed'){design={...design,...m.design};status.textContent=`Ready — ${review().filter(v=>v.finding.fix?.safety==='safe').length} fixes`;button.disabled=false;}
+ if(m.type==='photocraft:teacher-result')client.receive(m.requestId,m.response);
+ if(m.type==='photocraft:error')status.textContent=m.message;
+});
+button.onclick=async()=>{
+ button.disabled=true;
+ try{
+  const plan=JSON.parse(teacher.apply_all());
+  const batch=JSON.parse(teacher.commit_apply_all(JSON.stringify(plan),2000));
+  const updates=await client.run(design,batch.commands,ids);design={...design,...updates};
+  const fixes=review().filter(v=>v.finding.fix?.safety==='safe');
+  const text=design.layers.find(l=>l.type==='text');
+  status.textContent=`${fixes.length===0&&text.fontSize>=17?'PASS':'FAIL'} — live font ${text.fontSize}px; colour ${text.fill}; ${fixes.length} remaining fixes`;
+ }catch(error){status.textContent=`FAIL — ${error.message}`;}
+};
+const url=new URL('/photocraft/index.html',location.origin);url.searchParams.set('zenopherMode','corporate');url.searchParams.set('teacherTest',Date.now());if(needsPhotoCraftWebGl(navigator.userAgent))url.searchParams.set('webgl','1');frame.src=url;
+</script></body></html>

@@ -49,7 +49,7 @@ export interface TeacherHost {
   /** Snapshot JSON from the engine, in stacking order. */
   snapshotJson(): string;
   /** Run commands as ONE undoable step. */
-  runCommands(commands: Command[]): void;
+  runCommands(commands: Command[]): void | Promise<void>;
   selectLayers(ids: number[]): void;
   /** Page rendered as PNG, longest side at most maxPx. */
   renderPagePng(maxPx: number): Promise<Blob>;
@@ -64,6 +64,7 @@ export interface WasmTeacherLike {
   gesture_start(): void;
   gesture_end(now: number): void;
   run(): void;
+  next_pump_delay(now: number): number;
   pump(snapshot: string, now: number): string;
   findings(): string;
   badge(): number;

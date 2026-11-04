@@ -77,6 +77,7 @@ const mf = new Miniflare(convertV4MiniflareOptions({
     EMAIL_API_KEY: process.env.EMAIL_API_KEY || '',
     EMAIL_FROM: process.env.EMAIL_FROM || 'Zenopher <login@localhost>',
     LOCAL_AUTH_ENABLED: process.env.LOCAL_AUTH_ENABLED || 'true',
+    LOCAL_DEMO_CRITIQUE: process.env.LOCAL_DEMO_CRITIQUE || 'true',
     GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID || '',
     GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET || '',
     TURNSTILE_REQUIRED: process.env.TURNSTILE_REQUIRED || 'false',

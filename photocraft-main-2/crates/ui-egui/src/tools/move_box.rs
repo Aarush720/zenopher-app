@@ -2,7 +2,8 @@
 //! that starts where no layer would be picked (an empty, transparent spot, or the pasteboard
 //! outside the canvas) draws a box instead of moving anything. Releasing selects every layer whose
 //! content touches the box (`layer.selectInRect`; Auto-Select: Group selects their outermost
-//! groups), ⇧ adds them to the layers already selected. A click there selects nothing.
+//! groups), ⇧ adds them to the layers already selected. A plain click there clears layer
+//! selection; a Shift-click preserves it.
 
 use serde_json::json;
 
@@ -51,15 +52,15 @@ pub(crate) fn pointer(app: &mut PhotocraftApp, ev: ToolEvent) -> bool {
             app.layer_box = None;
             let (w, h) = (b.end[0] - b.start[0], b.end[1] - b.start[1]);
             if w == 0.0 && h == 0.0 && !b.add {
-                // A click on the pasteboard clears the layer target; a drag from there still
-                // uses the marquee, and a click on transparent pixels inside the canvas does not.
+                // A click on an empty canvas spot or the pasteboard clears the layer target; a
+                // drag from there still uses the marquee, and Shift-click preserves selection.
                 if let Some(st) = app.session.active() {
                     let rect = st.doc.bounds();
                     let outside = b.start[0] < f64::from(rect.x0)
                         || b.start[1] < f64::from(rect.y0)
                         || b.start[0] >= f64::from(rect.x1)
                         || b.start[1] >= f64::from(rect.y1);
-                    if outside {
+                    if outside || empty_at(app, b.start) {
                         let _ = app.run("select.deselectLayers", json!({}));
                     }
                 }
@@ -129,8 +130,8 @@ mod tests {
         assert_eq!(sel, ids);
     }
 
-    /// #4923: clicking the pasteboard, but not empty canvas pixels, clears layer targets.
-    /// A Shift-click preserves the selection, and a pasteboard drag remains a marquee.
+    /// #4923: clicking the pasteboard or empty canvas pixels clears layer targets.
+    /// A Shift-click preserves the selection, and a drag remains a marquee.
     #[test]
     fn pasteboard_click_deselects_layers_without_affecting_empty_canvas_clicks() {
         let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
@@ -145,7 +146,8 @@ mod tests {
             tool_event(app, ToolEvent::Up { x: p[0], y: p[1] }, mods);
         };
         click(&mut app, [30.0, 30.0], egui::Modifiers::NONE);
-        assert_eq!(app.session.active().unwrap().selected_layers(), vec![layer], "empty pixels are still in the canvas");
+        assert!(app.session.active().unwrap().selected_layers().is_empty(), "an empty canvas click clears layer selection");
+        app.run("layer.select", json!({"layer": layer.0})).unwrap();
         click(&mut app, [-10.0, 30.0], egui::Modifiers::SHIFT);
         assert_eq!(app.session.active().unwrap().selected_layers(), vec![layer], "Shift adds, not clears");
         click(&mut app, [-10.0, 30.0], egui::Modifiers::NONE);

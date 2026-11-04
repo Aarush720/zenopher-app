@@ -229,7 +229,7 @@ impl Snapshot {
                         None => return true,
                     }
                 }
-                true
+                false // A cycle or excessive nesting is not a visible, measurable object.
             })
             .collect()
     }

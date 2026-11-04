@@ -159,6 +159,14 @@ Photoshop-level depth, performance, or file fidelity.
 - Foreground/background color chips.
 - Swatches and color ramps.
 - Color panel modes and copy commands.
+- Color Wheel mode in the Color panel:
+  - HSB sliders.
+  - Hue ring.
+  - Saturation/brightness triangle.
+  - Foreground/background chip selection.
+  - Add-to-Swatches action.
+  - Drag and click editing.
+  - Persistence across themes and saved UI state.
 
 ## Toolbox
 

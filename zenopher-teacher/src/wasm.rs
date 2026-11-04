@@ -23,6 +23,7 @@ fn snap(s: &str) -> Result<Snapshot, JsValue> {
 #[wasm_bindgen]
 pub struct WasmTeacher {
     inner: Teacher,
+    snapshot_cache: Option<(String, Snapshot)>,
 }
 
 #[wasm_bindgen]
@@ -36,6 +37,7 @@ impl WasmTeacher {
         };
         Ok(WasmTeacher {
             inner: Teacher::new(cfg),
+            snapshot_cache: None,
         })
     }
     /// "creative" | "corporate_base" | "corporate_full". Returns a diff JSON when findings were cleared, else "".
@@ -70,10 +72,28 @@ impl WasmTeacher {
     pub fn run(&mut self) {
         self.inner.run();
     }
-    /// Call on a timer (about every 50 ms) or requestIdleCallback. Returns a diff JSON when a run finished, else "".
+    /// Milliseconds until work is due, or -1 when the host can sleep until the next edit.
+    pub fn next_pump_delay(&self, now_ms: f64) -> f64 {
+        self.inner
+            .next_pump_delay(now_ms as u64)
+            .map_or(-1.0, |ms| ms as f64)
+    }
+    /// Drive a scheduled slice. Identical snapshots are decoded once across slices.
     pub fn pump(&mut self, snapshot_json: &str, now_ms: f64) -> Result<String, JsValue> {
-        let s = snap(snapshot_json)?;
-        match self.inner.pump(&s, &GeometricRenderer, now_ms as u64) {
+        if self.inner.next_pump_delay(now_ms as u64) != Some(0) {
+            return Ok(String::new());
+        }
+        if !self
+            .snapshot_cache
+            .as_ref()
+            .is_some_and(|(json, _)| json == snapshot_json)
+        {
+            self.snapshot_cache = Some((snapshot_json.to_owned(), snap(snapshot_json)?));
+        }
+        let Some((_, snapshot)) = self.snapshot_cache.as_ref() else {
+            return Ok(String::new());
+        };
+        match self.inner.pump(snapshot, &GeometricRenderer, now_ms as u64) {
             Some(d) => json(&d),
             None => Ok(String::new()),
         }

@@ -219,6 +219,24 @@ fn worked_example() {
 }
 
 #[test]
+fn fully_hidden_text_gets_a_safe_apply_fix() {
+    let mut snap = example();
+    snap.layers.push(text(20, Rect::new(100.0, 200.0, 200.0, 40.0), 32.0, "#111111"));
+    snap.layers.push(shape(21, Rect::new(100.0, 200.0, 200.0, 40.0), "#222222"));
+    let mut teacher = Teacher::new(Config::default());
+    teacher.set_level(Level::CorporateBase);
+    settle(&mut teacher, &snap).expect("hidden-text review completes");
+    let finding = teacher
+        .findings()
+        .into_iter()
+        .find(|view| view.finding.rule == "text.hidden" && view.finding.layers.contains(&20))
+        .expect("hidden text is reported");
+    assert_eq!(finding.finding.severity, Severity::Must);
+    let fix = finding.finding.fix.expect("hidden text has an automatic fix");
+    assert!(matches!(fix.commands.as_slice(), [Command::SetBounds { layer: 20, rect }] if rect.y != 200.0 && rect.y >= 0.0 && rect.bottom() <= snap.page.height_px));
+}
+
+#[test]
 fn apply_all_batches_every_safe_fix_once() {
     let snap = example();
     let mut t = teacher_with_style();
@@ -354,10 +372,16 @@ fn style_hash_is_canonical_not_insertion_order() {
 fn nan_style_values_are_rejected_not_panics() {
     let mut v: serde_json::Value = serde_json::from_str(&bauhaus_json()).unwrap();
     v["patterns"]["colour.families"]["tolerance"] = serde_json::json!(f64::NAN);
-    assert!(validate_and_compile(&v.to_string()).is_err(), "NaN tolerance must fail validation");
+    assert!(
+        validate_and_compile(&v.to_string()).is_err(),
+        "NaN tolerance must fail validation"
+    );
     let mut v2: serde_json::Value = serde_json::from_str(&bauhaus_json()).unwrap();
     v2["overrides"]["spacing.cv_threshold"] = serde_json::json!(f64::INFINITY);
-    assert!(validate_and_compile(&v2.to_string()).is_err(), "inf override must fail validation");
+    assert!(
+        validate_and_compile(&v2.to_string()).is_err(),
+        "inf override must fail validation"
+    );
 }
 
 #[test]
@@ -369,7 +393,10 @@ fn stale_plan_cannot_commit_after_an_edit() {
     assert!(!plan.fixes.is_empty());
     // Any edit after the summary voids it.
     t.on_change(&[1], false, 20_000);
-    assert!(t.commit_apply_all(&plan, 20_001).is_err(), "stale plan must not commit");
+    assert!(
+        t.commit_apply_all(&plan, 20_001).is_err(),
+        "stale plan must not commit"
+    );
 }
 
 #[test]
@@ -394,4 +421,233 @@ fn learning_events_carry_no_content() {
     let stats = t.export_stats();
     assert_eq!(stats[0].applied, 1);
     assert_eq!(stats[0].undone_within_60s, 1);
+}
+
+#[test]
+fn unchanged_review_finishes_without_leaving_a_pending_wakeup() {
+    let snap = example();
+    let mut teacher = teacher_with_style();
+    settle(&mut teacher, &snap);
+    assert_eq!(teacher.next_pump_delay(20_000), None);
+    teacher.on_change(&[1], false, 20_000);
+    assert_eq!(teacher.next_pump_delay(20_100), Some(300));
+    for tick in 0..100 {
+        let diff = teacher.pump(&snap, &GeometricRenderer, 21_000 + tick);
+        assert!(diff.is_none(), "identical inputs do not need a UI update");
+        if teacher.next_pump_delay(21_000 + tick).is_none() {
+            return;
+        }
+    }
+    panic!("an unchanged review must eventually go back to sleep");
+}
+
+#[test]
+fn stale_single_fixes_wait_for_a_complete_review_and_cannot_be_replayed() {
+    use zenopher_teacher::TeacherError;
+    let snap = example();
+    let mut t = teacher_with_style();
+    settle(&mut t, &snap);
+    let key = t
+        .findings()
+        .into_iter()
+        .find(|v| v.finding.rule == "text_size")
+        .unwrap()
+        .key;
+    t.on_change(&[4], false, 20_000);
+    assert_eq!(t.apply(&key, 20_001), Err(TeacherError::ReviewPending));
+    assert_eq!(t.apply_all(), Err(TeacherError::ReviewPending));
+    // An identical run emits no diff but must still make the current findings usable.
+    for i in 0..100 {
+        t.pump(&snap, &GeometricRenderer, 21_000 + i);
+    }
+    assert!(t.apply(&key, 22_000).is_ok());
+    assert_eq!(t.apply(&key, 22_001), Err(TeacherError::ReviewPending));
+}
+
+#[test]
+fn apply_all_rejects_modified_commands_even_with_the_correct_plan_id() {
+    let mut t = teacher_with_style();
+    settle(&mut t, &example());
+    let plan = t.apply_all().unwrap();
+    let mut modified = plan.clone();
+    modified.fixes[0].commands.clear();
+    assert_eq!(
+        t.commit_apply_all(&modified, 20_000),
+        Err(zenopher_teacher::TeacherError::StalePlan)
+    );
+    assert!(t.commit_apply_all(&plan, 20_001).is_ok());
+}
+
+#[test]
+fn uncertain_photographic_backgrounds_do_not_offer_automatic_colour_fixes() {
+    let mut snap = example();
+    snap.layers[0].kind = LayerKind::Image;
+    let mut t = teacher_with_style();
+    settle(&mut t, &snap);
+    let contrast = t
+        .findings()
+        .into_iter()
+        .find(|v| v.finding.rule == "contrast" && v.finding.layers == vec![3])
+        .unwrap();
+    assert!(contrast.finding.unsure);
+    assert!(contrast.finding.fix.is_none());
+}
+
+#[test]
+fn zero_slice_configuration_finishes_instead_of_spinning_forever() {
+    let mut cfg = Config::default();
+    cfg.orchestration.rules_per_slice = 0;
+    let mut t = Teacher::new(cfg);
+    t.set_level(Level::CorporateBase);
+    for i in 0..100 {
+        t.pump(&example(), &GeometricRenderer, 10_000 + i);
+    }
+    assert_eq!(t.next_pump_delay(20_000), None);
+    assert!(t.badge() > 0);
+}
+
+#[test]
+fn sorted_grid_measurement_matches_pairwise_reference() {
+    use std::cell::RefCell;
+    use zenopher_teacher::{
+        background::BgCache,
+        measure::{measure, Env, MeasurementCache},
+    };
+    let mut snap = example();
+    let cfg = Config::default();
+    let bg = RefCell::new(BgCache::default());
+    for seed in 0..15 {
+        snap.layers = (0..80)
+            .map(|i| {
+                shape(
+                    i + 1,
+                    Rect::new(
+                        ((i * 137 + seed * 53) % 1000) as f32,
+                        ((i * 97 + seed * 23) % 1000) as f32,
+                        (i % 5) as f32,
+                        20.0,
+                    ),
+                    "#336699",
+                )
+            })
+            .collect();
+        let cache = MeasurementCache::default();
+        let env = Env::new(&snap, &cfg, &GeometricRenderer, &bg, &cache);
+        let mut shared = 0;
+        for (i, a) in snap.layers.iter().enumerate() {
+            for horizontal in [true, false] {
+                let edges = |l: &Layer| {
+                    if horizontal {
+                        [l.bounds.x, l.bounds.right()]
+                    } else {
+                        [l.bounds.y, l.bounds.bottom()]
+                    }
+                };
+                for e in edges(a) {
+                    if snap
+                        .layers
+                        .iter()
+                        .enumerate()
+                        .any(|(j, b)| j != i && edges(b).iter().any(|v| (v - e).abs() <= 5.4))
+                    {
+                        shared += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            measure("grid.edge_share", &env).unwrap().value,
+            shared as f64 / (snap.layers.len() * 4) as f64
+        );
+    }
+}
+
+#[test]
+fn measurement_cache_is_scoped_to_the_snapshot() {
+    use std::cell::RefCell;
+    use zenopher_teacher::{
+        background::BgCache,
+        measure::{measure, Env, MeasurementCache},
+    };
+    let mut snap = example();
+    let cfg = Config::default();
+    let bg = RefCell::new(BgCache::default());
+    let cache = MeasurementCache::default();
+    let env = Env::new(&snap, &cfg, &GeometricRenderer, &bg, &cache);
+    let original = measure("colour.dominant_share", &env).unwrap().value;
+    assert_eq!(
+        measure("colour.dominant_share", &env).unwrap().value,
+        original
+    );
+    snap.layers[0].bounds.h = 1080.0;
+    snap.layers[1].visible = false;
+    let fresh = MeasurementCache::default();
+    let env = Env::new(&snap, &cfg, &GeometricRenderer, &bg, &fresh);
+    assert!(measure("colour.dominant_share", &env).unwrap().value > original);
+}
+
+#[test]
+fn cached_backgrounds_are_resampled_when_the_page_changes_size() {
+    use std::cell::RefCell;
+    use zenopher_teacher::background::{BgCache, Renderer};
+    use zenopher_teacher::measure::{Env, MeasurementCache};
+    struct Pixels;
+    impl Renderer for Pixels {
+        fn sample_behind(
+            &self,
+            _: &Snapshot,
+            _: &Layer,
+            points: &[(f32, f32)],
+        ) -> Option<Vec<Color>> {
+            Some(
+                points
+                    .iter()
+                    .map(|(x, _)| {
+                        if *x < 80.0 {
+                            hex("#000000")
+                        } else {
+                            hex("#ffffff")
+                        }
+                    })
+                    .collect(),
+            )
+        }
+    }
+    let mut snap = example();
+    snap.layers[2].bounds = Rect::new(0.0, 0.0, 200.0, 100.0);
+    let cfg = Config::default();
+    let cache = MeasurementCache::default();
+    let bg = RefCell::new(BgCache::default());
+    let before = Env::new(&snap, &cfg, &Pixels, &bg, &cache).background(&snap.layers[2]);
+    snap.page.width_px = 40.0;
+    let after = Env::new(&snap, &cfg, &Pixels, &bg, &cache).background(&snap.layers[2]);
+    assert!(before.color.r > 0.9 && after.color.r < 0.1);
+}
+
+#[test]
+fn hidden_group_backgrounds_and_opaque_photo_covers_are_measured_correctly() {
+    use std::cell::RefCell;
+    use zenopher_teacher::{
+        background::BgCache,
+        measure::{measure, Env, MeasurementCache},
+    };
+    let mut snap = example();
+    snap.layers[0].parent = Some(99);
+    snap.layers.push(Layer {
+        visible: false,
+        ..layer(99, LayerKind::Group, Rect::default())
+    });
+    let cfg = Config::default();
+    let cache = MeasurementCache::default();
+    let bg = RefCell::new(BgCache::default());
+    let env = Env::new(&snap, &cfg, &GeometricRenderer, &bg, &cache);
+    assert!(env.background(&snap.layers[2]).color.r > 0.99);
+    // An opaque fill hides all unknown photographic pixels; colour metrics are available again.
+    snap.layers = vec![
+        layer(1, LayerKind::Image, Rect::new(0.0, 0.0, 1080.0, 1080.0)),
+        shape(2, Rect::new(0.0, 0.0, 1080.0, 1080.0), "#333333"),
+    ];
+    let fresh = MeasurementCache::default();
+    let env = Env::new(&snap, &cfg, &GeometricRenderer, &bg, &fresh);
+    assert_eq!(measure("colour.neutral_share", &env).unwrap().value, 1.0);
 }

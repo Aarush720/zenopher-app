@@ -253,6 +253,15 @@ export class WasmTeacher {
         return this;
     }
     /**
+     * Milliseconds until work is due, or -1 when the host can sleep until the next edit.
+     * @param {number} now_ms
+     * @returns {number}
+     */
+    next_pump_delay(now_ms) {
+        const ret = wasm.wasmteacher_next_pump_delay(this.__wbg_ptr, now_ms);
+        return ret;
+    }
+    /**
      * @param {string} key
      * @param {number} now_ms
      */
@@ -275,7 +284,7 @@ export class WasmTeacher {
         wasm.wasmteacher_on_change(this.__wbg_ptr, ptr0, len0, val2, val3);
     }
     /**
-     * Call on a timer (about every 50 ms) or requestIdleCallback. Returns a diff JSON when a run finished, else "".
+     * Drive a scheduled slice. Identical snapshots are decoded once across slices.
      * @param {string} snapshot_json
      * @param {number} now_ms
      * @returns {string}

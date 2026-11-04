@@ -28,15 +28,18 @@ const CRITIQUE_MESSAGES: Record<string, string> = {
 
 function Row({ v, bridge }: { v: FindingView; bridge: TeacherBridge }) {
   const [open, setOpen] = useState(v.display.explain_open);
+  const [error, setError] = useState<string | null>(null);
+  const apply = async () => { try { setError(null); await bridge.apply(v.key); } catch (reason) { setError(String(reason)); } };
   const canFix = v.finding.fix?.safety === "safe";
   return (
     <li className={`rounded-md border p-2 text-sm ${v.display.demoted ? "opacity-60" : ""}`}>
       <p>{v.message}</p>
+      {error && <p role="alert">{error}</p>}
       {open && <p className="mt-1 text-xs text-neutral-600">{v.explanation}</p>}
       <div className="mt-2 flex gap-2 text-xs">
         <button aria-label="Why" aria-expanded={open} onClick={() => setOpen(!open)}>ⓘ</button>
         {v.finding.layers.length > 0 && <button onClick={() => bridge.show(v.key)}>Show</button>}
-        {canFix && <button className="font-medium" onClick={() => void bridge.apply(v.key)}>{v.display.compact ? "Fix" : "Apply fix"}</button>}
+        {canFix && <button className="font-medium" onClick={() => void apply()}>{v.display.compact ? "Fix" : "Apply fix"}</button>}
         <button onClick={() => void bridge.dismiss(v.key)}>Dismiss</button>
       </div>
     </li>

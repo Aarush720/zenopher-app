@@ -1,14 +1,12 @@
 import React, { useState } from 'react';
 import { 
-  CheckCircle2, 
-  AlertTriangle, 
   Info, 
   Wand2, 
   Sliders, 
-  ChevronRight,
   ShieldCheck,
   Check,
-  Cloud
+  Cloud,
+  PanelRightClose
 } from 'lucide-react';
 import { Design, ReviewFinding } from '../../types';
 import { STYLE_PROFILES } from '../../data/styles';
@@ -22,6 +20,9 @@ interface ReviewPanelProps {
   onOpenStylePicker: () => void;
   onRequestCloudCritique?: () => Promise<ApiCritiqueResult>;
   cloudReviewAvailable?: boolean;
+  onCollapse?: () => void;
+  collapseButtonRef?: React.Ref<HTMLButtonElement>;
+  reviewContentId?: string;
 }
 
 export const ReviewPanel: React.FC<ReviewPanelProps> = ({
@@ -32,6 +33,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   onOpenStylePicker,
   onRequestCloudCritique,
   cloudReviewAvailable = false,
+  onCollapse,
+  collapseButtonRef,
+  reviewContentId,
 }) => {
   const [expandedExplanationId, setExpandedExplanationId] = useState<string | null>(null);
   const [cloudResult, setCloudResult] = useState<{ summary: string; points: Array<{ area: string; comment: string }> } | null>(null);
@@ -42,6 +46,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   const categories: { key: ReviewFinding['category']; label: string }[] = [
     { key: 'contrast', label: 'Contrast' },
     { key: 'text-size', label: 'Text size' },
+    { key: 'overlap', label: 'Overlap' },
     { key: 'alignment', label: 'Alignment' },
     { key: 'spacing', label: 'Spacing' },
     { key: 'crop', label: 'Crop' },
@@ -50,38 +55,54 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
   const currentStyle = design.styleId ? STYLE_PROFILES.find((s) => s.id === design.styleId) : null;
   const fixableCount = findings.filter((f) => f.isFixable && f.confidence === 'must').length;
+  const mustCount = findings.filter((f) => f.confidence === 'must').length;
 
   return (
-    <div className="review-panel" style={{ display: 'flex', flexDirection: 'column', gap: '14px', height: '100%' }}>
+    <div className="review-panel">
       {/* Top Header / Mode Indicator */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div>
+      <div className="review-panel-header">
+        <div className="review-panel-heading">
           <h2 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text)' }}>
-            Review
+            Review{mustCount > 0 ? ` — ${mustCount} must-change` : ''}
           </h2>
           <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
             {currentStyle ? `Measuring against ${currentStyle.name}` : 'Base system checks (No style)'}
           </div>
         </div>
 
-        {/* Apply All Action */}
-        <button
-          className={fixableCount > 0 ? 'primary' : ''}
-          disabled={fixableCount === 0}
-          onClick={onApplyAllFixes}
-          style={{
-            height: '34px',
-            padding: '0 12px',
-            fontSize: '11px',
-            fontWeight: 600,
-            borderRadius: '6px',
-            gap: '6px',
-          }}
-          title={fixableCount === 0 ? 'No fixes available' : 'Apply all high-confidence fixes'}
-        >
-          <Check size={13} />
-          <span>Apply all ({fixableCount})</span>
-        </button>
+        <div className="review-panel-actions">
+          {/* Apply All Action */}
+          <button
+            className={fixableCount > 0 ? 'primary' : ''}
+            disabled={fixableCount === 0}
+            onClick={onApplyAllFixes}
+            style={{
+              height: '34px',
+              padding: '0 12px',
+              fontSize: '11px',
+              fontWeight: 600,
+              borderRadius: '6px',
+              gap: '6px',
+            }}
+            title={fixableCount === 0 ? 'No fixes available' : 'Apply all high-confidence fixes'}
+          >
+            <Check size={13} />
+            <span>Apply all ({fixableCount})</span>
+          </button>
+          {onCollapse && (
+            <button
+              ref={collapseButtonRef}
+              className="review-panel-collapse"
+              aria-label="Collapse Review panel"
+              aria-expanded={true}
+              aria-controls={reviewContentId}
+              title="Collapse Review panel"
+              onClick={onCollapse}
+            >
+              <PanelRightClose size={16} aria-hidden="true" />
+            </button>
+          )}
+        </div>
       </div>
 
       {onRequestCloudCritique && (
@@ -107,14 +128,17 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                   points: (parsed.points || []).filter((point): point is { area: string; comment: string } => Boolean(point.area && point.comment)).map((point) => ({ area: point.area!, comment: point.comment! })),
                 });
               } catch (error) {
-                setCloudError(error instanceof Error ? error.message : 'Cloud critique failed.');
+                const raw = error instanceof Error ? error.message : 'Cloud critique failed.';
+                setCloudError(/429|daily_limit|rate_limited|Too many/i.test(raw)
+                  ? 'Daily review limit reached. Local checks still run; try the cloud review again tomorrow.'
+                  : raw);
               } finally {
                 setCloudLoading(false);
               }
             }}
             style={{ height: '32px', fontSize: '11px', gap: '6px' }}
           >
-            <Cloud size={13} /> {cloudLoading ? 'Reviewing…' : cloudReviewAvailable ? 'Run cloud critique' : 'Sign in and grant consent first'}
+            <Cloud size={13} /> {cloudLoading ? 'Reviewing…' : cloudReviewAvailable ? 'Run cloud critique' : 'Start the local backend first'}
           </button>
           {cloudError && <p style={{ fontSize: '11px', color: '#F87171', lineHeight: 1.4 }}>{cloudError}</p>}
           {cloudResult && (
@@ -161,25 +185,18 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
               color: 'var(--text)',
               borderRadius: '6px',
               whiteSpace: 'nowrap',
+              gap: '6px',
             }}
             onClick={onOpenStylePicker}
           >
-            Choose style
+            <Sliders size={13} aria-hidden="true" />
+            <span>Choose style</span>
           </button>
         </div>
       )}
 
       {/* Findings List or Clean State */}
-      <div 
-        style={{ 
-          flex: 1, 
-          overflowY: 'auto', 
-          display: 'flex', 
-          flexDirection: 'column', 
-          gap: '16px',
-          paddingRight: '2px',
-        }}
-      >
+      <div className="review-panel-findings">
         {findings.length === 0 ? (
           <div 
             style={{ 
@@ -290,10 +307,12 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                             fontWeight: 600,
                             borderRadius: '6px',
                             marginTop: '2px',
+                            gap: '6px',
                           }}
                           onClick={() => onApplyFix(finding)}
                         >
-                          {finding.fixActionLabel}
+                          <Wand2 size={13} aria-hidden="true" />
+                          <span>{finding.fixActionLabel}</span>
                         </button>
                       )}
                     </div>

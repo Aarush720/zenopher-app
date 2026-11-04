@@ -20,15 +20,18 @@ export class CritiqueClient {
   async review(req: CritiqueRequest, consentGranted: boolean): Promise<CritiqueOutcome> {
     if (!consentGranted) return { ok: false, reason: "no_consent" };
     if (typeof navigator !== "undefined" && navigator.onLine === false) return { ok: false, reason: "offline" };
-    this.ctrl = new AbortController();
-    const timer = setTimeout(() => this.ctrl?.abort("timeout"), this.opts.timeoutMs);
+    this.cancel();
+    const ctrl = new AbortController();
+    this.ctrl = ctrl;
+    const timer = setTimeout(() => ctrl.abort("timeout"), this.opts.timeoutMs);
     try {
       const png = await this.host.renderPagePng(this.opts.maxImagePx);
+      ctrl.signal.throwIfAborted();
       if (png.size > this.opts.maxImageBytes) return { ok: false, reason: "too_large" };
       const form = new FormData();
       form.set("image", png, "page.png");
       form.set("meta", JSON.stringify(req));
-      const res = await this.fetchFn(`${this.api}/critique`, { method: "POST", body: form, credentials: "include", signal: this.ctrl.signal });
+      const res = await this.fetchFn(`${this.api}/critique`, { method: "POST", body: form, credentials: "include", signal: ctrl.signal });
       if (res.status === 429) return { ok: false, reason: "rate_limited" };
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { code?: string };
@@ -39,10 +42,10 @@ export class CritiqueClient {
       const result = validateCritique(data.text, req.findings.map((f) => f.rule));
       return result ? { ok: true, result, cached: !!data.cached } : { ok: false, reason: "unavailable" };
     } catch (e) {
-      return { ok: false, reason: this.ctrl.signal.reason === "timeout" ? "timeout" : this.ctrl.signal.reason === "cancelled" ? "cancelled" : "unavailable" };
+      return { ok: false, reason: ctrl.signal.reason === "timeout" ? "timeout" : ctrl.signal.reason === "cancelled" ? "cancelled" : "unavailable" };
     } finally {
       clearTimeout(timer);
-      this.ctrl = null;
+      if (this.ctrl === ctrl) this.ctrl = null;
     }
   }
 }

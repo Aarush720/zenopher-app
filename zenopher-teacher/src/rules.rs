@@ -1,5 +1,4 @@
 //! The rules. Each reads the snapshot through `Env` and returns raw findings; `runner` classifies them.
-use crate::color::find_contrast_fix;
 use crate::finding::*;
 use crate::measure::{measure, Env};
 use crate::model::*;
@@ -101,6 +100,11 @@ pub static RULES: &[RuleDef] = &[
         run: overlap,
     },
     RuleDef {
+        id: "text.hidden",
+        class: Class::Base,
+        run: text_hidden,
+    },
+    RuleDef {
         id: "distortion",
         class: Class::Base,
         run: distortion,
@@ -146,26 +150,37 @@ fn contrast(env: &Env) -> RuleResult {
         if ratio + 1e-4 >= need {
             continue;
         }
-        let fix =
-            find_contrast_fix(t.color, l.opacity, bg.color, need + c.fix_margin).and_then(|col| {
-                safe(
-                    vec![Command::SetTextColor {
-                        layer: l.id,
-                        color: col,
-                    }],
-                    format!("text:{}:colour", l.id),
-                )
-            });
-        out.push(
-            Raw::new(
-                "contrast",
-                vec![l.id],
-                measured(ratio as f64, Unit::Ratio),
-                Expected::AtLeast { value: need as f64 },
-            )
-            .conf(bg.confidence)
-            .fix(fix),
-        );
+        let fix = (bg.confidence >= env.cfg.confidence.must_min_measurement)
+            .then(|| {
+                env.contrast_fix(t.color, l.opacity, bg.color, need + c.fix_margin)
+                    .and_then(|col| {
+                        safe(
+                            vec![Command::SetTextColor {
+                                layer: l.id,
+                                color: col,
+                            }],
+                            format!("text:{}:colour", l.id),
+                        )
+                    })
+            })
+            .flatten();
+        let mut finding = Raw::new(
+            "contrast",
+            vec![l.id],
+            measured(ratio as f64, Unit::Ratio),
+            Expected::AtLeast { value: need as f64 },
+        )
+        .conf(bg.confidence)
+        .fix(fix);
+        if finding.fix.is_none() {
+            let reason = if bg.confidence < env.cfg.confidence.must_min_measurement {
+                "background"
+            } else {
+                "transparency"
+            };
+            finding = finding.arg("automatic_fix", reason.into());
+        }
+        out.push(finding);
     }
     Ok(out)
 }
@@ -268,6 +283,22 @@ fn leading(env: &Env) -> RuleResult {
 }
 
 // --- Pair rules ---------------------------------------------------------------------------------
+
+/// Clamp a fixed rect fully inside the page. A MoveBy nudge or an overlap
+/// shift must never shove a layer out the other side, and a wider-than-page
+/// layer shrinks to fit instead of sliding off-canvas.
+fn clamp_to_page(page: Rect, x: f32, y: f32, w: f32, h: f32) -> Rect {
+    let w = w.min(page.w).max(1.0);
+    let h = h.min(page.h).max(1.0);
+    let x = x.clamp(page.x, (page.right() - w).max(page.x));
+    let y = y.clamp(page.y, (page.bottom() - h).max(page.y));
+    Rect::new(x, y, w, h)
+}
+
+/// Shift a rect by (dx, dy) then clamp it fully on-canvas.
+fn shifted_clamped(page: Rect, b: Rect, dx: f32, dy: f32) -> Rect {
+    clamp_to_page(page, b.x + dx, b.y + dy, b.w, b.h)
+}
 
 /// Cap on pair rules, which are O(n²). Above it the rule reports itself unavailable instead of stalling the editor.
 const MAX_PAIR_OBJECTS: usize = 400;
@@ -424,14 +455,26 @@ fn overlap(env: &Env) -> RuleResult {
             let layers = vec![a.id, b.id];
             match (a.kind, b.kind) {
                 (LayerKind::Text, LayerKind::Text) if ratio > c.text_text_ratio => {
-                    out.push(Raw::new(
-                        "overlap",
-                        layers,
-                        measured(ratio as f64, Unit::Fraction),
-                        Expected::AtMost {
-                            value: c.text_text_ratio as f64,
-                        },
-                    ));
+                    let dx = (a.bounds.right() - b.bounds.x + 8.0).max(8.0);
+                    out.push(
+                        Raw::new(
+                            "overlap",
+                            layers,
+                            measured(ratio as f64, Unit::Fraction),
+                            Expected::AtMost {
+                                value: c.text_text_ratio as f64,
+                            },
+                        )
+                        .fix(safe(
+                            vec![Command::MoveBy {
+                                layer: b.id,
+                                dx,
+                                dy: 0.0,
+                            }],
+                            format!("layer:{}:geometry", b.id),
+                        ))
+                        .sev(Severity::Must),
+                    );
                 }
                 // One shape sitting fully inside another is layering, not a collision.
                 (LayerKind::Shape, LayerKind::Shape)
@@ -454,6 +497,73 @@ fn overlap(env: &Env) -> RuleResult {
         }
     }
     Ok(out)
+}
+
+/// A text layer whose pixels are fully covered by a later visible layer is not useful to the
+/// reader. Keep this separate from ordinary overlap: a small overlap can be intentional, while a
+/// completely hidden text layer is always a demo-ready must-fix.
+fn text_hidden(env: &Env) -> RuleResult {
+    let page = env.snap.page.rect();
+    let mut out = Vec::new();
+    for text in env.text_layers() {
+        let area = text.bounds.area();
+        if area <= 0.0 {
+            continue;
+        }
+        let Some(text_index) = env.snap.index_of(text.id) else { continue };
+        let covered_by = env
+            .objects
+            .iter()
+            .copied()
+            .filter(|cover| env.snap.index_of(cover.id).is_some_and(|index| index > text_index))
+            .filter_map(|cover| {
+                let coverage = text.bounds.intersection_area(&cover.bounds) / area;
+                (coverage >= 0.98).then_some((cover, coverage))
+            })
+            .max_by(|(_, a), (_, b)| a.total_cmp(b));
+        let Some((cover, coverage)) = covered_by else { continue };
+
+        let fix = reveal_position(page, text.bounds, &env.snap.layers, &env.objects, text_index)
+            .and_then(|rect| safe(vec![Command::SetBounds { layer: text.id, rect }], format!("layer:{}:geometry", text.id)));
+        let mut finding = Raw::new(
+            "text.hidden",
+            vec![text.id, cover.id],
+            measured(coverage as f64, Unit::Fraction),
+            Expected::AtMost { value: 0.0 },
+        )
+        .fix(fix);
+        if finding.fix.is_none() {
+            finding = finding.arg("automatic_fix", "no_clear_space".into());
+        }
+        out.push(finding);
+    }
+    Ok(out)
+}
+
+/// Find the closest page-safe position next to the covering layer that is not covered by any
+/// later object. The teacher never changes text content or size for this fix.
+fn reveal_position(page: Rect, text: Rect, layers: &[Layer], objects: &[&Layer], text_index: usize) -> Option<Rect> {
+    let margin = 8.0;
+    let candidates = [
+        Rect::new(text.x, text.y - text.h - margin, text.w, text.h),
+        Rect::new(text.x, text.y + text.h + margin, text.w, text.h),
+        Rect::new(text.x - text.w - margin, text.y, text.w, text.h),
+        Rect::new(text.x + text.w + margin, text.y, text.w, text.h),
+    ];
+    candidates
+        .into_iter()
+        .filter(|candidate| {
+            candidate.x >= page.x
+                && candidate.y >= page.y
+                && candidate.right() <= page.right()
+                && candidate.bottom() <= page.bottom()
+        })
+        .find(|candidate| {
+            !objects.iter().copied().any(|cover| {
+                layers.iter().position(|layer| layer.id == cover.id).is_some_and(|index| index > text_index)
+                    && candidate.intersection_area(&cover.bounds) / candidate.area().max(1.0) >= 0.98
+            })
+        })
 }
 
 /// Repeated, similar-sized objects in a row or column whose gaps are uneven.
@@ -498,7 +608,7 @@ fn spacing(env: &Env) -> RuleResult {
             }
             let start = |l: &Layer| if horizontal { l.bounds.x } else { l.bounds.y };
             let size = |l: &Layer| along(l).0;
-            group.sort_by(|&a, &b| start(objs[a]).partial_cmp(&start(objs[b])).unwrap());
+            group.sort_by(|&a, &b| start(objs[a]).total_cmp(&start(objs[b])));
             let gaps: Vec<f32> = group
                 .windows(2)
                 .map(|w| start(objs[w[1]]) - (start(objs[w[0]]) + size(objs[w[0]])))

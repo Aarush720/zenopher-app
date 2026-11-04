@@ -59,6 +59,7 @@ pub fn message(k: &MessageKey) -> String {
         "alignment.message" => format!("These objects are {m} px out of line. They look almost, but not quite, aligned."),
         "spacing.message" => format!("Gaps in this row vary by {m}%. Even gaps look more deliberate."),
         "overlap.message" => format!("These objects overlap by {m}% of the smaller one. Overlap can hide content."),
+        "text.hidden.message" => format!("This text is {m}% covered by another layer, so readers cannot see it."),
         "tangency.message" => format!("These objects are {m} px apart. Nearly touching can read as accidental. Align them or leave at least {} px.", arg(k, "suggest")),
         "distortion.message" => format!("This image is stretched by {m}%. Its proportions differ from the original."),
         "print.dpi.message" => format!("This image has {m} DPI at print size. Print needs at least {e}."),
@@ -78,6 +79,7 @@ pub fn explanation(k: &MessageKey) -> String {
         "alignment.explain" => "A difference of a pixel or two is too small to look intentional but large enough to look untidy. Consistent edges give the layout a clear structure.",
         "spacing.explain" => "Repeated items with uneven gaps look unplanned. Equal gaps help the eye move along the row.",
         "overlap.explain" => "Overlapping text or shapes can hide content, and the result is hard to read or print cleanly.",
+        "text.hidden.explain" => "Text that is completely covered by a later layer cannot be read or exported as intended. The safe fix moves it to the nearest clear space without changing its size or content.",
         "tangency.explain" => "Objects that almost touch create visual tension. A clear gap or a shared edge looks like a decision.",
         "distortion.explain" => "Stretching an image changes the shapes in it, which is most visible in faces and logos.",
         "print.dpi.explain" => "Print needs more pixels per inch than a screen. Low resolution prints soft or blocky.",
@@ -86,11 +88,18 @@ pub fn explanation(k: &MessageKey) -> String {
         "pattern.explain" => "This is measured against the selected style. Styles describe tendencies, so this is guidance and can be ignored.",
         _ => "",
     };
-    if arg(k, "unsure") == "1" {
-        format!("{base} The teacher is unsure about this measurement, so it is shown as optional.")
-    } else {
-        base.to_string()
+    let mut text = base.to_string();
+    if k.key == "contrast.explain" {
+        match arg(k, "automatic_fix") {
+            "background" => text.push_str(" The background is too uncertain for an automatic colour change, so this finding needs manual review."),
+            "transparency" => text.push_str(" A colour-only change cannot reach this contrast at the current text transparency. Increase opacity or adjust the background."),
+            _ => {}
+        }
     }
+    if arg(k, "unsure") == "1" {
+        text.push_str(" The teacher is unsure about this measurement, so it is shown as optional.");
+    }
+    text
 }
 
 /// Panel text for a style that cannot be used (section 13.5). Base checks keep running in all three cases.
@@ -115,6 +124,7 @@ mod tests {
             "alignment",
             "spacing",
             "overlap",
+            "text.hidden",
             "tangency",
             "distortion",
             "print.dpi",

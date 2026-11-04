@@ -11,7 +11,8 @@ export function useTeacher(bridge: TeacherBridge | null) {
 
   useEffect(() => {
     alive.current = true;
-    if (!bridge) return;
+    setUnavailable([]);
+    if (!bridge) { setFindings([]); setBadge(0); return; }
     setFindings(bridge.findings());
     setBadge(bridge.badge());
     const off = bridge.subscribe((s) => {

@@ -147,6 +147,12 @@ body {
   color: var(--ui-icon);
 }
 
+/* Match the button foreground, including primary, selected and disabled states. */
+button .lucide {
+  color: inherit;
+  flex-shrink: 0;
+}
+
 /* Base Panel Styles - Flat monochrome surfaces, zero borders, zero shadows */
 .floating-panel {
   background: linear-gradient(180deg, #151515 0%, var(--on-surface) 42%);
@@ -238,10 +244,72 @@ body {
   background: #000000;
 }
 
+.teacher-review-panel .review-panel {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 18px 16px 28px;
+  overflow-x: hidden;
+}
+
 .teacher-review-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-section);
   min-height: 0;
   max-height: 100%;
-  overflow-y: auto;
+  padding: var(--space-panel);
+  overflow: hidden;
+}
+
+.editor-workspace.photocraft-editor-workspace.corporate-mode-workspace:has(> .teacher-review-panel.is-collapsed) {
+  grid-template-columns: minmax(0, 1fr) 40px;
+}
+
+.teacher-review-panel.is-collapsed {
+  padding: 8px 4px;
+  align-items: center;
+}
+
+.teacher-review-content {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: var(--space-section);
+  min-width: 0;
+  min-height: 0;
+}
+
+.teacher-review-content[hidden],
+.review-panel-reopen[hidden] {
+  display: none;
+}
+
+.review-panel-reopen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 32px;
+  padding: 12px 0;
+  border-radius: 10px;
+  color: var(--text-secondary);
+}
+
+.review-panel-reopen span {
+  writing-mode: vertical-rl;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.teacher-review-status {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .photocraft-editor-workspace {
@@ -709,16 +777,8 @@ body {
 }
 
 .editor-entry-curtain.is-covered .editor-entry-loader {
-  opacity: 0;
-  transform: translateY(6px);
-  animation: editorLoaderAppear 220ms ease-out var(--editor-motion) forwards;
-}
-
-@keyframes editorLoaderAppear {
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  opacity: 1;
+  transform: none;
 }
 
 /* Tinted gallery sections keep their heading and scrollable tile rail together. */
@@ -919,6 +979,51 @@ input::placeholder, textarea::placeholder {
   gap: 12px;
 }
 
+/* Preset cards need a visible hit area; the size labels alone are too subtle. */
+.tile-container {
+  min-width: 0;
+}
+
+.tile {
+  min-height: 58px;
+  padding: 14px 10px;
+  background: var(--container);
+  border: 1px solid transparent;
+  border-radius: var(--radius-tile);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  cursor: pointer;
+  transition: background var(--motion), border-color var(--motion), transform 150ms ease-out;
+}
+
+.tile:hover {
+  background: var(--container-hover);
+}
+
+.tile:active {
+  background: var(--container-pressed);
+  transform: scale(0.98);
+}
+
+.tile.selected {
+  background: var(--ui-selected);
+  border-color: var(--ui-selected);
+}
+
+.tile:focus-visible {
+  outline: 2px solid var(--ui-selected);
+  outline-offset: 3px;
+}
+
+.tile-meta-title {
+  margin-top: 8px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.25;
+}
+
 /* Keyframe Animations */
 @keyframes fadeIn {
   from { opacity: 0; }
@@ -1077,7 +1182,65 @@ input::placeholder, textarea::placeholder {
 }
 
 .review-panel {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: var(--space-section);
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.review-panel > :not(.review-panel-findings) {
+  flex-shrink: 0;
+}
+
+.review-panel-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.review-panel-heading {
+  flex: 1 1 130px;
+  min-width: 0;
+}
+
+.review-panel-header > button {
+  flex-shrink: 0;
+}
+
+.review-panel-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.review-panel-collapse {
+  width: 28px;
+  height: 34px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--text-secondary);
+}
+
+.review-panel-findings {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 4px 4px 0;
+}
+
+.review-panel-findings > * {
+  flex-shrink: 0;
 }
 
 /* Grids */
@@ -1519,6 +1682,8 @@ input::placeholder, textarea::placeholder {
 .photocraft-wasm-workspace {
   position: relative;
   display: flex;
+  flex-direction: column;
+  container: editor-workspace / inline-size;
   min-width: 0;
   min-height: 0;
   flex: 1;
@@ -1530,7 +1695,8 @@ input::placeholder, textarea::placeholder {
   position: relative;
   z-index: 0;
   width: 100%;
-  height: 100%;
+  height: 0;
+  flex: 1 1 0;
   min-width: 0;
   min-height: 0;
   border: 0;
@@ -1566,6 +1732,29 @@ input::placeholder, textarea::placeholder {
 
 .photocraft-wasm-loading-icon {
   animation: photocraft-wasm-spin 900ms linear infinite;
+}
+
+.photocraft-wasm-quickbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 0;
+}
+
+.photocraft-wasm-quickbar-button {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid #333;
+  background: #1c1c1c;
+  color: #eee;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.photocraft-wasm-quickbar-button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .photocraft-wasm-open {
@@ -1902,6 +2091,21 @@ input::placeholder, textarea::placeholder {
 .app-shell.editor-entry-covered .navigation-profile-state,
 .app-shell.editor-entry-covered .navigation-editor-state {
   transition-delay: 220ms;
+}
+
+/* Keep the input in the document so Safari permits a synchronous .click(),
+   while removing it from the visual layout. */
+.native-file-input {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  opacity: 0;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 /* Keep editor mode as a single compact row on narrow screens; the dashboard

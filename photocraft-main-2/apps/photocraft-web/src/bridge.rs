@@ -27,8 +27,12 @@ const PROTOCOL_VERSION: u64 = 1;
 #[derive(Debug)]
 pub enum Request {
     Open { request_id: String, design: Value },
+    OpenFile { request_id: String, name: String, bytes: Vec<u8> },
     Save { request_id: String },
     Sync { request_id: String },
+    Menu { request_id: String, command: Option<String> },
+    Profile { request_id: String, corporate: bool },
+    Teacher { request_id: String, revision: u64, commands: Vec<Value> },
 }
 
 #[derive(Clone)]
@@ -36,6 +40,7 @@ pub struct Bridge {
     queue: Rc<RefCell<Vec<Request>>>,
     origin: Rc<String>,
     current_design: Rc<RefCell<Option<Value>>>,
+    wake: Rc<RefCell<Option<egui::Context>>>,
     // The listener must stay alive for the lifetime of the web app.
     listener: Rc<Closure<dyn FnMut(MessageEvent)>>,
 }
@@ -46,8 +51,36 @@ impl Bridge {
         let origin = Rc::new(parent_origin());
         let queue_for_listener = queue.clone();
         let expected_origin = origin.clone();
+        let wake = Rc::new(RefCell::new(None::<egui::Context>));
+        let wake_for_listener = wake.clone();
         let listener = Closure::<dyn FnMut(MessageEvent)>::new(move |event: MessageEvent| {
             if event.origin() != expected_origin.as_str() {
+                return;
+            }
+            let from_parent = web_sys::window()
+                .and_then(|window| window.parent().ok().flatten())
+                .is_some_and(|parent| event.source().as_ref().is_some_and(|source| Object::is(source.as_ref(), parent.as_ref())));
+            if !from_parent {
+                return;
+            }
+            let data = event.data();
+            let source = Reflect::get(&data, &JsValue::from_str("source")).ok().and_then(|value| value.as_string());
+            let kind = Reflect::get(&data, &JsValue::from_str("type")).ok().and_then(|value| value.as_string());
+            if source.as_deref() != Some(ZENOPHER_SOURCE) {
+                return;
+            }
+            if kind.as_deref() == Some("zenopher:open-file") {
+                let Some(request_id) = Reflect::get(&data, &JsValue::from_str("requestId")).ok().and_then(|value| value.as_string()) else { return };
+                let Some(name) = Reflect::get(&data, &JsValue::from_str("name")).ok().and_then(|value| value.as_string()) else { return };
+                let Some(bytes_value) = Reflect::get(&data, &JsValue::from_str("bytes")).ok() else { return };
+                let bytes = Uint8Array::new(&bytes_value).to_vec();
+                if bytes.is_empty() || bytes.len() > 256 * 1024 * 1024 || name.len() > 512 {
+                    return;
+                }
+                queue_for_listener.borrow_mut().push(Request::OpenFile { request_id, name, bytes });
+                if let Some(ctx) = wake_for_listener.borrow().as_ref() {
+                    ctx.request_repaint();
+                }
                 return;
             }
             let Some(message) = message_value(&event) else { return };
@@ -60,12 +93,32 @@ impl Bridge {
             let Some(kind) = message.get("type").and_then(Value::as_str) else { return };
             let request = match kind {
                 "zenopher:open-design" => message.get("design").cloned().map(|design| Request::Open { request_id, design }),
+                "zenopher:profile" => match message.get("mode").and_then(Value::as_str) {
+                    Some("corporate") => Some(Request::Profile { request_id, corporate: true }),
+                    Some("creative") => Some(Request::Profile { request_id, corporate: false }),
+                    _ => None,
+                },
+                "zenopher:teacher-fix" => message
+                    .get("revision")
+                    .and_then(Value::as_u64)
+                    .zip(message.get("commands").and_then(Value::as_array))
+                    .filter(|(_, commands)| commands.len() <= 2000)
+                    .map(|(revision, commands)| Request::Teacher { request_id, revision, commands: commands.clone() }),
                 "zenopher:save" => Some(Request::Save { request_id }),
                 "zenopher:sync" => Some(Request::Sync { request_id }),
+                "zenopher:menu-list" => Some(Request::Menu { request_id, command: None }),
+                "zenopher:menu-invoke" => message
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .filter(|id| id.len() <= 256)
+                    .map(|id| Request::Menu { request_id, command: Some(id.to_owned()) }),
                 _ => None,
             };
             if let Some(request) = request {
                 queue_for_listener.borrow_mut().push(request);
+                if let Some(ctx) = wake_for_listener.borrow().as_ref() {
+                    ctx.request_repaint();
+                }
             }
         });
 
@@ -73,7 +126,11 @@ impl Bridge {
             let _ = window.add_event_listener_with_callback("message", listener.as_ref().unchecked_ref());
         }
 
-        Self { queue, origin, current_design: Rc::default(), listener: Rc::new(listener) }
+        Self { queue, origin, current_design: Rc::default(), wake, listener: Rc::new(listener) }
+    }
+
+    pub fn attach_context(&self, ctx: egui::Context) {
+        *self.wake.borrow_mut() = Some(ctx);
     }
 
     pub fn take(&self) -> Vec<Request> {
@@ -150,6 +207,17 @@ impl Bridge {
         }));
     }
 
+    pub fn send_file_opened(&self, request_id: &str, design: &Value, warnings: &[String]) {
+        self.post_json(json!({
+            "source": PHOTOCRAFT_SOURCE,
+            "type": "photocraft:file-opened",
+            "protocol": PROTOCOL_VERSION,
+            "requestId": request_id,
+            "design": design,
+            "warnings": warnings,
+        }));
+    }
+
     /// Zenopher learning signal: the teacher counts an undo only within 60 s of a fix.
     /// This is not a content change by itself — the changed design arrives via send_changed.
     pub fn send_undo(&self) {
@@ -192,14 +260,76 @@ impl Drop for Bridge {
 }
 
 /// Applies one queued request on PhotoCraft's UI thread.
-pub fn process(app: &mut PhotocraftApp, bridge: &Bridge, request: Request) {
+pub fn process(app: &mut PhotocraftApp, ctx: &egui::Context, bridge: &Bridge, request: Request) {
     match request {
+        Request::Profile { request_id, corporate } => {
+            match crate::hosted_profile::apply_tool_profile(app, corporate) {
+                Ok(()) => {
+                    if let Some(design) = bridge.current_design.borrow_mut().as_mut() {
+                        design["mode"] = json!(if corporate { "corporate" } else { "creative" });
+                    }
+                }
+                Err(error) => bridge.send_error(&request_id, &error),
+            }
+            ctx.request_repaint();
+        }
+        Request::Teacher { request_id, revision, commands } => {
+            let result = crate::teacher_bridge::apply(&mut app.session, revision, &commands, &format!("teacher:{request_id}"));
+            let response = match result {
+                Ok(()) => {
+                    let base = bridge.current_design.borrow().clone();
+                    if let (Some(state), Some(base)) = (app.session.active(), base) {
+                        let mut warnings = Vec::new();
+                        let mut design = native_design(&state.doc, base, &mut warnings);
+                        design["editorRevision"] = json!(state.revision);
+                        *bridge.current_design.borrow_mut() = Some(design.clone());
+                        json!({"ok": true, "design": design})
+                    } else {
+                        json!({"ok": false, "error": "The canvas is no longer open"})
+                    }
+                }
+                Err(error) => json!({"ok": false, "error": error}),
+            };
+            bridge.post_json(json!({"source": PHOTOCRAFT_SOURCE, "type": "photocraft:teacher-result", "requestId": request_id, "response": response}));
+            ctx.request_repaint();
+        }
+        Request::Menu { request_id, command } => {
+            let response = crate::hosted_menu::dispatch(app, ctx, command.as_deref());
+            bridge.post_json(json!({
+                "source": PHOTOCRAFT_SOURCE,
+                "type": "photocraft:menu-result",
+                "requestId": request_id,
+                "response": response,
+            }));
+        }
         Request::Open { request_id, design } => match open_design(app, &design) {
             Ok((design_id, imported, warnings)) => {
                 *bridge.current_design.borrow_mut() = Some(design.clone());
                 bridge.send_opened(&request_id, design_id.as_deref(), imported, &warnings);
             }
             Err(error) => bridge.send_error(&request_id, &error),
+        },
+        Request::OpenFile { request_id, name, bytes } => match app.open_automation_bytes(&name, &bytes) {
+            Ok(mut warnings) => {
+                let Some(document) = app.session.active().map(|state| state.doc.clone()) else {
+                    bridge.send_error(&request_id, "PhotoCraft could not activate the imported PSD");
+                    return;
+                };
+                let base = bridge.current_design.borrow().clone().unwrap_or_else(|| {
+                    json!({
+                        "id": format!("design-{}", js_now()),
+                        "title": "Imported Design",
+                        "mode": "creative",
+                        "background": "#000000",
+                    })
+                });
+                let mut design = native_design(&document, base, &mut warnings);
+                design["title"] = json!(std::path::Path::new(&name).file_stem().map(|value| value.to_string_lossy().to_string()).unwrap_or(name.clone()));
+                design["editorRevision"] = json!(app.session.active().map(|state| state.revision));
+                *bridge.current_design.borrow_mut() = Some(design.clone());
+                bridge.send_file_opened(&request_id, &design, &warnings);
+            }
+            Err(error) => bridge.send_error(&request_id, &format!("Could not import {name}: {error}")),
         },
         Request::Save { request_id } => {
             let Some(document) = app.session.active().map(|state| state.doc.clone()) else {
@@ -219,6 +349,10 @@ pub fn process(app: &mut PhotocraftApp, bridge: &Bridge, request: Request) {
             }
         }
         Request::Sync { request_id } => {
+            let revision = app.session.active().map(|state| state.revision);
+            if revision.is_some() && bridge.current_design.borrow().as_ref().and_then(|base| base.get("editorRevision")).and_then(Value::as_u64) == revision {
+                return;
+            }
             let Some(document) = app.session.active().map(|state| state.doc.clone()) else {
                 return;
             };
@@ -226,7 +360,8 @@ pub fn process(app: &mut PhotocraftApp, bridge: &Bridge, request: Request) {
                 return;
             };
             let mut warnings = Vec::new();
-            let synced_design = native_design(&document, base, &mut warnings);
+            let mut synced_design = native_design(&document, base, &mut warnings);
+            synced_design["editorRevision"] = json!(app.session.active().map(|state| state.revision));
             let changed = bridge.current_design.borrow().as_ref().is_none_or(|current| !same_design_content(current, &synced_design));
             if changed {
                 *bridge.current_design.borrow_mut() = Some(synced_design.clone());
@@ -351,7 +486,8 @@ fn import_layer(app: &mut PhotocraftApp, layer: &Value) -> Result<(), String> {
 
 fn native_design(document: &Document, mut base: Value, warnings: &mut Vec<String>) -> Value {
     let mut layers = Vec::new();
-    append_native_layers(&document.layers, &mut layers, warnings);
+    let flat_rgb = matches!(document.mode, photocraft_doc::ColorMode::Rgb | photocraft_doc::ColorMode::Grayscale) && document.icc_profile.is_none();
+    append_native_layers(&document.layers, &mut layers, warnings, true, 1.0, 0, flat_rgb);
     if let Some(object) = base.as_object_mut() {
         object.insert("width".into(), json!(document.size.width));
         object.insert("height".into(), json!(document.size.height));
@@ -361,21 +497,37 @@ fn native_design(document: &Document, mut base: Value, warnings: &mut Vec<String
     base
 }
 
-fn append_native_layers(native_layers: &[Layer], output: &mut Vec<Value>, warnings: &mut Vec<String>) {
+fn append_native_layers(
+    native_layers: &[Layer],
+    output: &mut Vec<Value>,
+    warnings: &mut Vec<String>,
+    visible: bool,
+    opacity: f32,
+    depth: usize,
+    flat_rgb: bool,
+) {
+    if depth > 64 {
+        warnings.push("Excessively nested groups were omitted from review".into());
+        return;
+    }
     for layer in native_layers {
         if let LayerContent::Group(group) = &layer.content {
-            append_native_layers(&group.children, output, warnings);
+            append_native_layers(&group.children, output, warnings, visible && layer.visible, opacity * layer.opacity, depth + 1, flat_rgb);
             continue;
         }
-        match native_layer(layer, warnings) {
-            Ok(Some(layer)) => output.push(layer),
+        match native_layer(layer, warnings, flat_rgb) {
+            Ok(Some(mut exported)) => {
+                exported["visible"] = json!(visible && layer.visible);
+                exported["opacity"] = json!((opacity * layer.opacity).clamp(0.0, 1.0));
+                output.push(exported);
+            }
             Ok(None) => {}
             Err(error) => warnings.push(error),
         }
     }
 }
 
-fn native_layer(layer: &Layer, warnings: &mut Vec<String>) -> Result<Option<Value>, String> {
+fn native_layer(layer: &Layer, warnings: &mut Vec<String>, flat_rgb: bool) -> Result<Option<Value>, String> {
     let id = format!("photocraft-{}", layer.id.0);
     let visible = layer.visible;
     let locked = layer.locks.any();
@@ -457,7 +609,17 @@ fn native_layer(layer: &Layer, warnings: &mut Vec<String>) -> Result<Option<Valu
                 }
                 return Ok(None);
             };
-            let Some((image_url, bounds)) = surface_data_url(surface)? else { return Ok(None) };
+            let Some((image_url, bounds, flat)) = surface_data_url(surface)? else { return Ok(None) };
+            let simple = flat_rgb
+                && layer.blend == photocraft_doc::BlendMode::Normal
+                && !layer.clipped
+                && layer.mask.is_none()
+                && layer.vector_mask.is_none()
+                && layer.fill_opacity == 1.0
+                && layer.excluded_channels == 0
+                && layer.effects == Default::default()
+                && layer.blend_if == Default::default()
+                && layer.advanced == Default::default();
             Ok(Some(json!({
                 "id": id,
                 "name": layer.name,
@@ -472,6 +634,7 @@ fn native_layer(layer: &Layer, warnings: &mut Vec<String>) -> Result<Option<Valu
                 "opacity": opacity,
                 "fill": "#ffffff",
                 "imageUrl": image_url,
+                "reviewFill": if simple { flat } else { None },
                 "assetId": id,
             })))
         }
@@ -487,7 +650,7 @@ fn layer_surface(layer: &Layer) -> Option<&photocraft_raster::Surface> {
     }
 }
 
-fn surface_data_url(surface: &photocraft_raster::Surface) -> Result<Option<(String, (i32, i32, u32, u32))>, String> {
+fn surface_data_url(surface: &photocraft_raster::Surface) -> Result<Option<(String, (i32, i32, u32, u32), Option<String>)>, String> {
     let bounds = surface.content_bounds();
     if bounds.is_empty() {
         return Ok(None);
@@ -501,17 +664,20 @@ fn surface_data_url(surface: &photocraft_raster::Surface) -> Result<Option<(Stri
     let channels = surface.channels();
     let samples = surface.read_region(bounds);
     let mut rgba = Vec::with_capacity((area as usize).saturating_mul(4));
+    let mut flat = crate::review_pixels::UniformRgba::default();
     for pixel in samples.chunks(channels) {
         let (r, g, b, a) = match channels {
             1 => (pixel[0], pixel[0], pixel[0], 1.0),
             2 => (pixel[0], pixel[0], pixel[0], pixel[1]),
             _ => (pixel[0], pixel[1], pixel[2], if channels > 3 { pixel[3] } else { 1.0 }),
         };
-        rgba.extend_from_slice(&[to_byte(r), to_byte(g), to_byte(b), to_byte(a)]);
+        let pixel = [to_byte(r), to_byte(g), to_byte(b), to_byte(a)];
+        flat.observe(pixel);
+        rgba.extend_from_slice(&pixel);
     }
     let image = Image::from_u8(width, height, ChannelLayout::Rgba, rgba).map_err(|error| error.to_string())?;
     let bytes = photocraft_codecs::encode(&image, Format::Png, &EncodeOptions::default()).map_err(|error| error.to_string())?;
-    Ok(Some((format!("data:image/png;base64,{}", BASE64.encode(bytes)), (bounds.x0, bounds.y0, width, height))))
+    Ok(Some((format!("data:image/png;base64,{}", BASE64.encode(bytes)), (bounds.x0, bounds.y0, width, height), flat.hex())))
 }
 
 fn shape_kind_and_rect(live: Option<&LiveShape>, bounds: photocraft_geom::Rect) -> (&'static str, [i32; 4]) {

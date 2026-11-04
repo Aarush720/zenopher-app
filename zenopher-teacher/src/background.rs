@@ -52,25 +52,43 @@ impl Renderer for GeometricRenderer {
         points: &[(f32, f32)],
     ) -> Option<Vec<Color>> {
         let idx = snap.index_of(layer.id)?;
+        let visible: std::collections::HashSet<LayerId> =
+            snap.objects().iter().map(|l| l.id).collect();
         let below: Vec<&Layer> = snap.layers[..idx]
             .iter()
-            .filter(|l| l.visible && l.opacity > 0.0)
+            .filter(|l| visible.contains(&l.id))
+            .filter(|l| {
+                matches!(l.kind, LayerKind::Shape | LayerKind::Image)
+                    && l.bounds.intersection_area(&layer.bounds) > 0.0
+            })
             .collect();
         let mut out = Vec::with_capacity(points.len());
         for &(x, y) in points {
-            let mut c = snap.page.background.with_alpha(1.0);
+            let mut c = Some(snap.page.background.with_alpha(1.0));
             for l in &below {
                 match l.kind {
-                    LayerKind::Image if l.bounds.contains_point(x, y) => return None,
+                    LayerKind::Image if l.bounds.contains_point(x, y) => c = None,
+                    LayerKind::Shape
+                        if matches!(l.shape, Some(ShapeKind::Polygon | ShapeKind::Path))
+                            && l.bounds.contains_point(x, y) =>
+                    {
+                        c = None;
+                    }
                     LayerKind::Shape if shape_hit(l, x, y) => {
                         if let Some(f) = l.fill {
-                            c = composite(f.with_alpha(f.a * l.opacity), c);
+                            let paint = f.with_alpha(f.a * l.opacity);
+                            c = match c {
+                                Some(under) => Some(composite(paint, under)),
+                                // A fully opaque fill hides all unknown photo pixels beneath it.
+                                None if paint.a >= 1.0 => Some(paint.with_alpha(1.0)),
+                                None => None,
+                            };
                         }
                     }
                     _ => {}
                 }
             }
-            out.push(c);
+            out.push(c?);
         }
         Some(out)
     }
@@ -101,7 +119,10 @@ pub fn sample_background(
     if x1 > x0 && y1 > y0 {
         b = Rect::new(x0, y0, x1 - x0, y1 - y0);
     }
-    let n = (cfg.max_samples as f32).sqrt().floor().max(1.0) as usize;
+    let n = (cfg.max_samples.clamp(1, 4096) as f32)
+        .sqrt()
+        .floor()
+        .max(1.0) as usize;
     let mut points = Vec::with_capacity(n * n);
     for j in 0..n {
         for i in 0..n {
@@ -161,6 +182,13 @@ pub fn stamp(snap: &Snapshot, layer: &Layer) -> u64 {
     let bg = snap.page.background;
     for v in [bg.r, bg.g, bg.b] {
         mix(&mut h, v.to_bits() as u64);
+    }
+    mix(&mut h, snap.page.width_px.to_bits() as u64);
+    mix(&mut h, snap.page.height_px.to_bits() as u64);
+    // Group visibility affects descendants, even when the child revision is unchanged.
+    for group in snap.layers.iter().filter(|l| l.kind == LayerKind::Group) {
+        mix(&mut h, group.id as u64);
+        mix(&mut h, group.version);
     }
     mix(&mut h, layer.version);
     for v in [

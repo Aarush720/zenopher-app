@@ -32,6 +32,17 @@ impl Scheduler {
     pub fn gesture_active(&self) -> bool {
         self.gesture
     }
+    /// None means there is no runnable work, including while a gesture is active.
+    pub fn next_delay(&self, now: u64) -> Option<u64> {
+        if self.gesture || (self.dirty.is_empty() && !self.page_dirty) {
+            return None;
+        }
+        if self.forced {
+            return Some(0);
+        }
+        self.last_change
+            .map(|changed| self.idle_ms.saturating_sub(now.saturating_sub(changed)))
+    }
     /// A change during the idle window extends it.
     pub fn on_change(&mut self, layers: &[LayerId], page: bool, now: u64) {
         self.dirty.extend(layers.iter().copied());
@@ -77,6 +88,21 @@ impl Scheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reports_only_the_next_required_wakeup() {
+        let mut s = Scheduler::new(400);
+        assert_eq!(s.next_delay(0), None);
+        s.on_change(&[1], false, 100);
+        assert_eq!(s.next_delay(200), Some(300));
+        s.gesture_start();
+        assert_eq!(s.next_delay(1000), None);
+        s.gesture_end(1000);
+        assert_eq!(s.next_delay(1000), Some(400));
+        s.force();
+        assert_eq!(s.next_delay(1000), Some(0));
+        assert!(s.poll(1000).is_some());
+        assert_eq!(s.next_delay(1000), None);
+    }
     #[test]
     fn waits_for_idle_and_gesture() {
         let mut s = Scheduler::new(400);

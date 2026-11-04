@@ -20,6 +20,15 @@
 mod hosted_profile;
 
 #[cfg(any(target_arch = "wasm32", test))]
+mod hosted_menu;
+
+#[cfg(any(target_arch = "wasm32", test))]
+mod teacher_bridge;
+
+#[cfg(any(target_arch = "wasm32", test))]
+mod review_pixels;
+
+#[cfg(any(target_arch = "wasm32", test))]
 mod preset_bridge;
 
 #[cfg(target_arch = "wasm32")]

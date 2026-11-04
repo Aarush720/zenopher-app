@@ -1,20 +1,21 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { NavigationRail } from './components/NavigationRail';
 import { TopBar } from './components/TopBar';
 import { HomeView } from './views/HomeView';
-import { DesignsView } from './views/DesignsView';
-import { TemplatesView } from './views/TemplatesView';
-import { TrashView } from './views/TrashView';
-import { StylesView } from './views/StylesView';
-import { TutorialsView } from './views/TutorialsView';
-import { SettingsView } from './views/SettingsView';
-import { PrivacyView } from './views/PrivacyView';
-import { LegalView } from './views/LegalView';
-import { HelpView } from './views/HelpView';
-import { SharedDesignView } from './views/SharedDesignView';
+const DesignsView = lazy(() => import('./views/DesignsView').then((module) => ({ default: module.DesignsView })));
+const TemplatesView = lazy(() => import('./views/TemplatesView').then((module) => ({ default: module.TemplatesView })));
+const TrashView = lazy(() => import('./views/TrashView').then((module) => ({ default: module.TrashView })));
+const StylesView = lazy(() => import('./views/StylesView').then((module) => ({ default: module.StylesView })));
+const TutorialsView = lazy(() => import('./views/TutorialsView').then((module) => ({ default: module.TutorialsView })));
+const SettingsView = lazy(() => import('./views/SettingsView').then((module) => ({ default: module.SettingsView })));
+const PrivacyView = lazy(() => import('./views/PrivacyView').then((module) => ({ default: module.PrivacyView })));
+const LegalView = lazy(() => import('./views/LegalView').then((module) => ({ default: module.LegalView })));
+const HelpView = lazy(() => import('./views/HelpView').then((module) => ({ default: module.HelpView })));
+const SharedDesignView = lazy(() => import('./views/SharedDesignView').then((module) => ({ default: module.SharedDesignView })));
 
 import { PhotoCraftWasmWorkspace } from './components/editor/PhotoCraftWasmWorkspace';
 import { ReviewPanel } from './components/editor/ReviewPanel';
+import { ReviewSidebar } from './components/editor/ReviewSidebar';
 
 import { NewDesignModal } from './components/NewDesignModal';
 import { ExportModal } from './components/ExportModal';
@@ -43,7 +44,9 @@ import { STYLE_PROFILES } from './data/styles';
 import { api, ApiAccount, ApiConfig, ApiUser, BackendUnavailableError } from './services/api';
 import { pullRemoteDesigns, syncDesign } from './services/sync';
 import { renderDesignToPng } from './services/render';
+import type { RunTeacherCommands } from './components/editor/teacherCommands';
 import { useRustTeacher } from './teacher/useRustTeacher';
+import { createDesignPersistence, mergeDesignUpdate, mergeSyncResult } from './services/designState';
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -64,6 +67,11 @@ function readImageDimensions(src: string): Promise<{ width: number; height: numb
     img.onerror = () => reject(new Error('The selected image could not be decoded'));
     img.src = src;
   });
+}
+
+interface PendingPhotoCraftFile {
+  name: string;
+  bytes: Uint8Array;
 }
 
 function preloadDesignAssets(design: Design): Promise<void[]> {
@@ -98,6 +106,7 @@ export const App: React.FC = () => {
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [sharedDesignToken, setSharedDesignToken] = useState<string | null>(null);
+  const [pendingPhotoCraftFile, setPendingPhotoCraftFile] = useState<PendingPhotoCraftFile | null>(null);
 
   // Active Editor State
   const [activeDesignId, setActiveDesignId] = useState<string | null>(null);
@@ -127,9 +136,11 @@ export const App: React.FC = () => {
   // Load local data immediately, then probe the optional backend without blocking the app.
   useEffect(() => {
     const initializeData = async () => {
+      let localDesigns: Design[] = [];
       try {
         const loadedSettings = await storage.getSettings();
         const loadedDesigns = await storage.getAllDesigns();
+        localDesigns = loadedDesigns;
         setSettings(loadedSettings);
         setDesigns(loadedDesigns);
       } catch (e) {
@@ -162,19 +173,20 @@ export const App: React.FC = () => {
             if (Object.keys(consentUpdates).length > 0) setSettings(await storage.saveSettings(consentUpdates));
           } catch (error) { console.warn('Could not load cloud consent:', error); }
           try {
-            const remoteDesigns = await pullRemoteDesigns();
+            const remoteDesigns = await pullRemoteDesigns(localDesigns);
             if (remoteDesigns.length > 0) {
+              const initialById = new Map(localDesigns.map((design) => [design.id, design]));
               setDesigns((localDesigns) => {
                 const remoteById = new Map(remoteDesigns.map((design) => [design.remoteId, design]));
                 const merged = localDesigns.map((local) => {
                   const remote = local.remoteId ? remoteById.get(local.remoteId) : undefined;
                   if (remote) remoteById.delete(local.remoteId);
                   if (!remote || (local.remoteVersion ?? 0) >= (remote.remoteVersion ?? 0)) return local;
-                  return remote;
+                  return mergeSyncResult(local, initialById.get(local.id) ?? local, remote);
                 });
                 return [...merged, ...Array.from(remoteById.values())];
               });
-              await Promise.all(remoteDesigns.map((design) => storage.saveDesign(design)));
+              await Promise.all(remoteDesigns.filter((design) => !initialById.has(design.id)).map((design) => storage.saveDesign(design)));
             }
           } catch (error) {
             console.warn('Could not pull remote designs:', error);
@@ -287,14 +299,46 @@ export const App: React.FC = () => {
 
   // Periodic autosave for active design
   const activeDesign = designs.find((d) => d.id === activeDesignId) || null;
+  const activeDesignRef = useRef(activeDesign);
+  activeDesignRef.current = activeDesign;
+  const persistence = useMemo(() => {
+    let saving = 0;
+    return createDesignPersistence(async (design) => {
+      if (++saving === 1) setSaveStatus('saving');
+      try { await storage.saveDesign(design); }
+      finally { if (--saving === 0) setSaveStatus('saved'); }
+    });
+  }, []);
+
+  const observedDesignsRef = useRef(new Map<string, Design>());
+  useEffect(() => {
+    const previous = observedDesignsRef.current;
+    for (const design of designs) {
+      if (previous.has(design.id) && previous.get(design.id) !== design) persistence.schedule(design);
+    }
+    observedDesignsRef.current = new Map(designs.map((design) => [design.id, design]));
+  }, [designs, persistence]);
+
+  useEffect(() => {
+    const flush = () => persistence.flushAll();
+    window.addEventListener('pagehide', flush);
+    const hidden = () => { if (document.hidden) flush(); };
+    document.addEventListener('visibilitychange', hidden);
+    return () => {
+      flush();
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', hidden);
+    };
+  }, [persistence]);
+
+  useEffect(() => () => { if (activeDesignId) persistence.flush(activeDesignId); }, [activeDesignId, currentDestination, persistence]);
 
   const syncDesignInBackground = async (design: Design) => {
     if (!sessionUser || !api.authenticated || syncingDesignIdsRef.current.has(design.id)) return;
     syncingDesignIdsRef.current.add(design.id);
     try {
       const synced = await syncDesign(design);
-      await storage.saveDesign(synced);
-      setDesigns((prev) => prev.map((item) => (item.id === synced.id ? synced : item)));
+      setDesigns((prev) => prev.map((item) => (item.id === synced.id ? mergeSyncResult(item, design, synced) : item)));
       setBackendStatus('online');
     } catch (error) {
       if (error instanceof BackendUnavailableError) setBackendStatus('offline');
@@ -304,6 +348,8 @@ export const App: React.FC = () => {
       syncingDesignIdsRef.current.delete(design.id);
     }
   };
+  const syncDesignRef = useRef(syncDesignInBackground);
+  syncDesignRef.current = syncDesignInBackground;
 
   const handleExportAccount = async () => {
     const job = await api.startAccountExport();
@@ -345,28 +391,27 @@ export const App: React.FC = () => {
     const style = activeDesign.styleId ? STYLE_PROFILES.find((profile) => profile.id === activeDesign.styleId) : null;
     const metadata = {
       page: {
-        width_px: activeDesign.width,
-        height_px: activeDesign.height,
+        width_px: Math.round(activeDesign.width),
+        height_px: Math.round(activeDesign.height),
         mode: activeDesign.styleId ? 'corporate_full' as const : 'corporate_base' as const,
         style_name: style?.name ?? null,
       },
       findings: findings.map((finding, index) => ({
-        rule: (finding.id.replace(/[^a-z0-9_.]/gi, '_').toLowerCase() || `finding_${index}`).slice(0, 40),
+        rule: (finding.rule.replace(/[^a-z_.]/gi, '_').toLowerCase() || `finding_${index}`).slice(0, 40),
         class: finding.confidence === 'must' ? 'base' as const : 'pattern' as const,
         severity: finding.confidence,
-        measured: finding.currentValue.slice(0, 20),
-        expected: finding.requiredValue.slice(0, 30),
+        measured: finding.measured.slice(0, 20),
+        expected: finding.expected.slice(0, 30),
       })),
     };
     return api.requestCritique(image, metadata);
   };
 
   const cloudReviewAvailable = Boolean(
-    sessionUser
-    && api.authenticated
-    && backendStatus === 'online'
+    backendStatus === 'online'
     && backendConfig?.features.critique
-    && settings.aiReviewConsent,
+    && settings.aiReviewConsent
+    && (api.authenticated || api.baseUrl),
   );
 
   const handleOpenShare = async () => {
@@ -390,19 +435,17 @@ export const App: React.FC = () => {
   };
 
   useEffect(() => {
-    if (!activeDesign) return;
+    if (!activeDesign || currentDestination !== 'editor') return;
 
     const intervalMs = (settings.autosaveInterval || 15) * 1000;
     const timer = setInterval(() => {
-      setSaveStatus('saving');
-      storage.saveDesign(activeDesign).then(() => {
-        void syncDesignInBackground(activeDesign);
-        setTimeout(() => setSaveStatus('saved'), 400);
-      });
+      const current = activeDesignRef.current;
+      if (!current || current.syncStatus === 'synced') return;
+      void syncDesignRef.current(current);
     }, intervalMs);
 
     return () => clearInterval(timer);
-  }, [activeDesign, settings.autosaveInterval, sessionUser]);
+  }, [activeDesign?.id, currentDestination, settings.autosaveInterval, sessionUser]);
 
   // Design Management Actions
   const handleCreateDesign = async (data: {
@@ -576,19 +619,28 @@ export const App: React.FC = () => {
 
   const handleCanvasReady = () => {
     canvasReadyRef.current = true;
-    if (editorEntryPhase === 'covered') scheduleEditorReveal();
+    if (editorEntryPhase === 'covered') {
+      // Readiness supersedes the fallback timer; it must not keep a ready canvas covered.
+      if (entryRevealTimerRef.current !== null) {
+        window.clearTimeout(entryRevealTimerRef.current);
+        entryRevealTimerRef.current = null;
+      }
+      scheduleEditorReveal();
+    }
   };
 
   const handleUpdateActiveDesign = (updates: Partial<Design>) => {
     if (!activeDesignId) return;
-    setDesigns((prev) =>
-      prev.map((d) => {
+    setDesigns((prev) => {
+      let changed = false;
+      const next = prev.map((d) => {
         if (d.id !== activeDesignId) return d;
-        const updated = { ...d, ...updates, updatedAt: Date.now() };
-        storage.saveDesign(updated);
+        const updated = mergeDesignUpdate(d, updates);
+        changed ||= updated !== d;
         return updated;
-      })
-    );
+      });
+      return changed ? next : prev;
+    });
   };
 
   const handleUpdateLayer = (layerId: string, updates: Partial<Layer>) => {
@@ -720,7 +772,9 @@ export const App: React.FC = () => {
     }
   };
 
-  // Open file handler (.zph, PNG, PSD)
+  // Open file handler (.zph, PNG, PSD). PSD/PSB decoding stays inside PhotoCraft so the
+  // imported layers, masks, text and effects use the native Rust importer instead of being
+  // flattened or approximated by the React shell.
   const handleOpenFile = () => {
     fileInputRef.current?.click();
   };
@@ -730,7 +784,28 @@ export const App: React.FC = () => {
     if (!file) return;
 
     try {
-      if (file.name.toLowerCase().endsWith('.zph') || file.type === 'application/json') {
+      const lowerName = file.name.toLowerCase();
+      if (lowerName.endsWith('.psd') || lowerName.endsWith('.psb')) {
+        const importedDesign: Design = {
+          id: 'design-' + Math.random().toString(36).substring(2, 9),
+          title: file.name.replace(/\.[^/.]+$/, ''),
+          width: 1920,
+          height: 1080,
+          unit: 'px',
+          mode: activeDesign?.mode ?? 'creative',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          isSaved: true,
+          isDeleted: false,
+          background: '#000000',
+          layers: [],
+        };
+        setPendingPhotoCraftFile({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
+        await storage.saveDesign(importedDesign);
+        setDesigns((prev) => [importedDesign, ...prev]);
+        void syncDesignInBackground(importedDesign);
+        handleOpenDesign(importedDesign);
+      } else if (lowerName.endsWith('.zph') || file.type === 'application/json') {
         const imported = await storage.importZPH(file);
         setDesigns((prev) => [imported, ...prev]);
         void syncDesignInBackground(imported);
@@ -773,7 +848,7 @@ export const App: React.FC = () => {
         void syncDesignInBackground(newDesign);
         handleOpenDesign(newDesign);
       } else {
-        throw new Error('Unsupported file type. Choose a .zph, JSON, PNG, JPEG, or SVG file.');
+        throw new Error('Unsupported file type. Choose a .zph, JSON, PNG, JPEG, SVG, PSD, or PSB file.');
       }
     } catch (err) {
       alert('Could not open file: ' + (err as Error).message);
@@ -782,13 +857,17 @@ export const App: React.FC = () => {
     }
   };
 
+  const runTeacherCommandsRef = useRef<RunTeacherCommands | null>(null);
+  const teacherReady = useCallback((run: RunTeacherCommands | null) => { runTeacherCommandsRef.current = run; }, []);
+
   // Corporate review is powered by the Rust teacher in zenopher-teacher.
   const teacher = useRustTeacher(
-    activeDesign,
+    currentDestination === 'editor' ? activeDesign : null,
     api.baseUrl,
     settings.learningDataConsent,
     handleUpdateActiveDesign,
     (ids) => setSelectedLayerId(ids[0] ?? null),
+    (commands, ids) => runTeacherCommandsRef.current?.(commands, ids) ?? Promise.reject(new Error('The canvas is still loading.')),
   );
   const findings = teacher.findings;
 
@@ -821,29 +900,29 @@ export const App: React.FC = () => {
   };
 
   // Filtered designs for Home view
-  const recentDesigns = designs
+  const recentDesigns = useMemo(() => designs
     .filter((d) => !d.isDeleted)
     .filter((d) => !searchQuery.trim() || d.title.toLowerCase().includes(searchQuery.trim().toLowerCase()))
-    .sort((a, b) => b.updatedAt - a.updatedAt);
+    .sort((a, b) => b.updatedAt - a.updatedAt), [designs, searchQuery]);
 
-  const savedDesigns = designs
+  const savedDesigns = useMemo(() => designs
     .filter((d) => !d.isDeleted && d.isSaved)
     .filter((d) => !searchQuery.trim() || d.title.toLowerCase().includes(searchQuery.trim().toLowerCase()))
-    .sort((a, b) => b.createdAt - a.createdAt);
+    .sort((a, b) => b.createdAt - a.createdAt), [designs, searchQuery]);
 
-  const trashDesigns = designs.filter((d) => d.isDeleted);
+  const trashDesigns = useMemo(() => designs.filter((d) => d.isDeleted), [designs]);
 
   const selectedLayer = activeDesign?.layers.find((l) => l.id === selectedLayerId) || null;
 
   if (sharedDesignToken) {
     return (
-      <SharedDesignView
+      <Suspense fallback={<div className="app-loading" role="status">Loading shared design…</div>}><SharedDesignView
         token={sharedDesignToken}
         onClose={() => {
           setSharedDesignToken(null);
           window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}`);
         }}
-      />
+      /></Suspense>
     );
   }
 
@@ -862,8 +941,8 @@ export const App: React.FC = () => {
       <input
         type="file"
         ref={fileInputRef}
-        style={{ display: 'none' }}
-        accept=".zph,.json,image/png,image/jpeg,image/svg+xml,.psd"
+        className="native-file-input"
+        accept=".zph,.json,image/png,image/jpeg,image/svg+xml,.psd,.psb"
         onChange={handleFileChange}
       />
 
@@ -903,39 +982,51 @@ export const App: React.FC = () => {
         />
 
         {/* Workspace Display Area */}
+        <Suspense fallback={<div className="app-loading" role="status">Loading workspace…</div>}>
         {currentDestination === 'editor' && activeDesign ? (
           <div className={`editor-workspace photocraft-editor-workspace${activeDesign.mode === 'creative' ? ' creative-mode-workspace' : ' corporate-mode-workspace'}`}>
             <PhotoCraftWasmWorkspace
               design={activeDesign}
               toolProfile={activeDesign.mode}
+              fileToOpen={pendingPhotoCraftFile}
               onCanvasReady={handleCanvasReady}
+              onTeacherReady={teacherReady}
               onDesignChange={(updates) => handleUpdateActiveDesign(updates)}
+              onFileOpened={() => setPendingPhotoCraftFile(null)}
+              onRequestOpenFile={handleOpenFile}
               onUndo={() => void teacher.noteUndo()}
               onGestureStart={() => teacher.gestureStart()}
               onGestureEnd={() => teacher.gestureEnd()}
             />
             {activeDesign.mode === 'corporate' && (
-              <aside className="floating-panel teacher-review-panel" aria-label="Design review">
-                {(teacher.loading || teacher.error || teacher.styleMessage || teacher.unavailable.length > 0) && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '10px', fontSize: '11px', color: 'var(--text-muted)' }}>
-                    {teacher.loading && <span>Checking your design…</span>}
-                    {teacher.error && <span role="alert">{teacher.error}</span>}
-                    {teacher.styleMessage && <span>{teacher.styleMessage}</span>}
-                    {teacher.unavailable.length > 0 && (
-                      <span>Some checks could not run on this page: {teacher.unavailable.join(', ')}.</span>
+              <ReviewSidebar>
+                {({ collapse, collapseButtonRef, contentId }) => (
+                  <>
+                    {(teacher.loading || teacher.error || teacher.styleMessage || teacher.unavailable.length > 0) && (
+                      <div className="teacher-review-status">
+                        {teacher.loading && <span>Checking your design…</span>}
+                        {teacher.error && <span role="alert">{teacher.error}</span>}
+                        {teacher.styleMessage && <span>{teacher.styleMessage}</span>}
+                        {teacher.unavailable.length > 0 && (
+                          <span>Some checks could not run on this page: {teacher.unavailable.join(', ')}.</span>
+                        )}
+                      </div>
                     )}
-                  </div>
+                    <ReviewPanel
+                      design={activeDesign}
+                      findings={findings}
+                      onApplyFix={handleApplyFix}
+                      onApplyAllFixes={handleApplyAllFixes}
+                      onOpenStylePicker={() => setStylePickerOpen(true)}
+                      onRequestCloudCritique={handleRequestCloudCritique}
+                      cloudReviewAvailable={cloudReviewAvailable}
+                      onCollapse={collapse}
+                      collapseButtonRef={collapseButtonRef}
+                      reviewContentId={contentId}
+                    />
+                  </>
                 )}
-                <ReviewPanel
-                  design={activeDesign}
-                  findings={findings}
-                  onApplyFix={handleApplyFix}
-                  onApplyAllFixes={handleApplyAllFixes}
-                  onOpenStylePicker={() => setStylePickerOpen(true)}
-                  onRequestCloudCritique={handleRequestCloudCritique}
-                  cloudReviewAvailable={cloudReviewAvailable}
-                />
-              </aside>
+              </ReviewSidebar>
             )}
           </div>
         ) : currentDestination === 'home' ? (
@@ -1079,6 +1170,7 @@ export const App: React.FC = () => {
         ) : currentDestination === 'help' ? (
           <HelpView onOpenShortcuts={() => setShortcutsModalOpen(true)} />
         ) : null}
+        </Suspense>
       </div>
 
       {editorEntryPhase !== 'idle' && editorEntryRect && (
@@ -1091,10 +1183,12 @@ export const App: React.FC = () => {
             height: `${(editorEntryPhase === 'ready' ? editorEntryRect : editorEntryTargetRect ?? editorEntryRect).height}px`,
             borderRadius: `${(editorEntryPhase === 'ready' ? editorEntryRect : editorEntryTargetRect ?? editorEntryRect).borderRadius}px`,
           }}
-          aria-hidden="true"
+          role="status"
+          aria-live="polite"
+          aria-label="Opening design"
         >
           <div className="editor-entry-loader">
-            <span className="canvas-loader-ring" />
+            <span className="canvas-loader-ring" aria-hidden="true" />
             <span>Opening canvas</span>
           </div>
         </div>

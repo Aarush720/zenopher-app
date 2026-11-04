@@ -11,7 +11,7 @@ export const ShortcutsModal: React.FC<ShortcutsModalProps> = ({ isOpen, onClose 
 
   const shortcuts = [
     { key: '⌘ / Ctrl + N', description: 'Create new design' },
-    { key: '⌘ / Ctrl + O', description: 'Open local file (.zph, PNG)' },
+    { key: '⌘ / Ctrl + O', description: 'Open local file (.zph, PNG, PSD, PSB)' },
     { key: '⌘ / Ctrl + S', description: 'Explicitly save design' },
     { key: '⌘ / Ctrl + E', description: 'Open export modal' },
     { key: '⌘ / Ctrl + K', description: 'Open global search' },

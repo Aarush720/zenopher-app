@@ -12,7 +12,6 @@ use photocraft_ui_egui::i18n;
 use photocraft_ui_egui::served_fonts;
 use photocraft_ui_egui::theme::ThemeKind;
 use photocraft_ui_egui::{FileDialogAnswer, FileDialogRequest, PhotocraftApp, Services};
-use serde_json::json;
 use wasm_bindgen::JsCast as _;
 
 type Inbox = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
@@ -59,7 +58,9 @@ pub fn start() {
         };
         let q = query();
         let force_cpu = q.contains("cpu");
-        let corporate_mode = crate::hosted_profile::is_corporate_mode(query_param(&q, "zenopherMode").as_deref());
+        let hosted_mode = query_param(&q, "zenopherMode");
+        let corporate_mode = crate::hosted_profile::is_corporate_mode(hosted_mode.as_deref());
+        let host_menu = query_param(&q, "zenopherMenu").as_deref() == Some("pill");
         let mut options = eframe::WebOptions::default();
         photocraft_ui_egui::gpu_canvas::use_adapter_limits(&mut options.wgpu_options.wgpu_setup);
         if q.contains("webgl")
@@ -97,6 +98,7 @@ pub fn start() {
                     preset_warnings.extend(warnings);
                     let drag = listen_drag(&pen_target);
                     let mut app = PhotocraftApp::new(session, services(inbox.clone(), place_inbox.clone(), drag_pos_service(pen_target.clone(), drag)));
+                    crate::hosted_profile::configure_editing_defaults(&mut app, hosted_mode.as_deref());
                     configure_hosted_profile(&mut app, corporate_mode);
                     if !preset_warnings.is_empty() {
                         photocraft_ui_egui::notices::post(&mut app, i18n::t("Some brush presets could not be loaded"), preset_warnings, true, None);
@@ -111,6 +113,7 @@ pub fn start() {
                     }
                     let unsaved = Arc::new(AtomicBool::new(false));
                     guard_unload(unsaved.clone());
+                    bridge_for_runner.attach_context(cc.egui_ctx.clone());
                     bridge_for_runner.send_ready();
                     Ok(Box::new(WebShell {
                         app,
@@ -121,6 +124,7 @@ pub fn start() {
                         database,
                         presets,
                         bridge: bridge_for_runner.clone(),
+                        host_menu,
                         zenopher_history: Default::default(),
                         zenopher_gesture: false,
                     }))
@@ -231,23 +235,17 @@ fn query_param(search: &str, key: &str) -> Option<String> {
         .and_then(|(_, value)| js_sys::decode_uri_component(value).ok().and_then(|value| value.as_string()))
 }
 
-/// Corporate mode is the same PhotoCraft engine with a smaller, creation-first toolbar. The
-/// allow-list keeps the editor approachable for brand work while leaving the full tool surface
-/// available to Creative mode.
+/// Corporate mode is the same full PhotoCraft engine and toolbar as Creative mode.
+/// Both modes keep every tool visible so resize handles, Type, Crop and all other
+/// tools behave identically.
 fn configure_hosted_profile(app: &mut PhotocraftApp, corporate: bool) {
     if !corporate {
         return;
     }
 
-    let hidden = crate::hosted_profile::corporate_hidden_tools();
-    if let Err(error) = app.run("edit.toolbar", json!({"hidden": hidden})) {
+    if let Err(error) = crate::hosted_profile::apply_tool_profile(app, true) {
         log::warn!("could not configure the corporate toolbar: {error}");
     }
-
-    // Keep the compact Zenopher shell: the toolbar and canvas stay visible, while the secondary
-    // icon rail is removed so the useful PhotoCraft panels have more room.
-    app.ui.panels.rail = false;
-    app.ui.panels.toolbar_double = false;
 }
 
 /// Reads the served font manifest, if the host has one, and lists its families in the font menus.
@@ -321,6 +319,7 @@ struct WebShell {
     database: Option<web_sys::IdbDatabase>,
     presets: crate::preset_bridge::Bridge,
     bridge: crate::bridge::Bridge,
+    host_menu: bool,
     /// Zenopher signals: last seen history length per document (undo), and gesture edge.
     zenopher_history: std::collections::HashMap<u64, usize>,
     zenopher_gesture: bool,
@@ -439,7 +438,10 @@ impl eframe::App for WebShell {
             });
         }
         for request in self.bridge.take() {
-            crate::bridge::process(&mut self.app, &self.bridge, request);
+            crate::bridge::process(&mut self.app, ctx, &self.bridge, request);
+        }
+        if self.host_menu {
+            self.app.ui.panels.menu_bar = false;
         }
         self.serve_fonts(ctx);
         self.app.logic_frame(ctx, frame);

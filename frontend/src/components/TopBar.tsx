@@ -186,7 +186,7 @@ export const TopBar: React.FC<TopBarProps> = ({
               className="btn-square"
               style={{ width: '36px', height: '36px', minWidth: '36px', minHeight: '36px', borderRadius: '14px' }}
               onClick={onOpenFile}
-              title="Open file (.zph, PNG, PSD)"
+              title="Open file (.zph, PNG, PSD, PSB)"
               aria-label="Open file"
             >
               <FolderOpen size={16} />

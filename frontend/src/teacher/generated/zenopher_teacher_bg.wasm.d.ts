@@ -16,6 +16,7 @@ export const wasmteacher_gesture_end: (a: number, b: number) => void;
 export const wasmteacher_gesture_start: (a: number) => void;
 export const wasmteacher_import_stats: (a: number, b: number, c: number) => [number, number];
 export const wasmteacher_new: (a: number, b: number) => [number, number, number];
+export const wasmteacher_next_pump_delay: (a: number, b: number) => number;
 export const wasmteacher_note_undo: (a: number, b: number, c: number, d: number) => void;
 export const wasmteacher_on_change: (a: number, b: number, c: number, d: number, e: number) => void;
 export const wasmteacher_pump: (a: number, b: number, c: number, d: number) => [number, number, number, number];

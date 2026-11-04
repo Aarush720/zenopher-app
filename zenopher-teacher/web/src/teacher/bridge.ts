@@ -13,7 +13,12 @@ const STATS_KEY = "teacher:stats";
  * events to the recorder, and runs fixes through the host as single undoable steps. It decides nothing about the design.
  */
 export class TeacherBridge {
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private running = false;
+  private paused = false;
+  private lifecycle = 0;
+  private snapshot: string | null = null;
+  private styleRequest = 0;
   private listeners = new Set<Listener>();
   private unavailable: string[] = [];
   private level: Level = "creative";
@@ -21,11 +26,39 @@ export class TeacherBridge {
   constructor(private t: WasmTeacherLike, private host: TeacherHost, private recorder: EventRecorder, private catalog: CatalogSync) {}
 
   async start(): Promise<void> {
+    const lifecycle = ++this.lifecycle;
+    this.running = true;
     const stats = await idbGet<string>(STATS_KEY);
+    if (!this.running || lifecycle !== this.lifecycle) return;
     if (stats) this.t.import_stats(stats);
-    this.timer = setInterval(() => this.tick(), PUMP_MS);
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", this.visibilityChanged);
+    this.schedule();
   }
-  stop(): void { if (this.timer !== null) clearInterval(this.timer); this.timer = null; }
+  stop(): void {
+    this.running = false;
+    this.lifecycle++;
+    this.styleRequest++;
+    this.cancelTimer();
+    this.snapshot = null;
+    if (typeof document !== "undefined") document.removeEventListener("visibilitychange", this.visibilityChanged);
+  }
+
+  private cancelTimer(): void {
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  private visibilityChanged = (): void => { this.schedule(); };
+
+  setPaused(paused: boolean): void { this.paused = paused; this.schedule(); }
+
+  private schedule(minimumDelay = 0): void {
+    this.cancelTimer();
+    if (!this.running || this.paused || (typeof document !== "undefined" && document.hidden)) return;
+    const delay = this.t.next_pump_delay(this.host.now());
+    if (delay < 0) return;
+    this.timer = setTimeout(() => this.tick(), Math.max(minimumDelay, Math.ceil(delay)));
+  }
 
   subscribe(l: Listener): () => void { this.listeners.add(l); return () => this.listeners.delete(l); }
   findings(): FindingView[] { return JSON.parse(this.t.findings()) as FindingView[]; }
@@ -37,62 +70,94 @@ export class TeacherBridge {
   }
 
   private tick(): void {
-    if (this.level === "creative") return;
+    this.timer = null;
+    if (!this.running || this.level === "creative") return;
     try {
-      const snap = this.host.snapshotJson();
+      const snap = this.snapshot ?? this.host.snapshotJson();
       if (!snap) return;
-      JSON.parse(snap); // fail fast: never hand malformed JSON to WASM
+      this.snapshot = snap;
       const out = this.t.pump(snap, this.host.now());
-      if (!out) return;
-      this.unavailable = (JSON.parse(out) as Diff).unavailable;
-      this.notify();
+      if (out) {
+        this.unavailable = (JSON.parse(out) as Diff).unavailable;
+        this.notify();
+      }
     } catch {
-      // A bad snapshot or WASM throw must never kill the timer; next tick retries.
+      // A malformed snapshot is retried on the next edit, not in an infinite busy loop.
+      this.snapshot = null;
+      return;
     }
+    this.schedule(PUMP_MS);
   }
 
   // --- from the document core ---
-  onChange(layerIds: number[], pageChanged = false): void { this.t.on_change(Uint32Array.from(layerIds), pageChanged, this.host.now()); }
-  gestureStart(): void { this.t.gesture_start(); }
-  gestureEnd(): void { this.t.gesture_end(this.host.now()); }
+  onChange(layerIds: number[], pageChanged = false): void {
+    this.snapshot = null;
+    this.t.on_change(Uint32Array.from(layerIds), pageChanged, this.host.now());
+    this.schedule();
+  }
+  gestureStart(): void { this.t.gesture_start(); this.cancelTimer(); }
+  gestureEnd(): void { this.t.gesture_end(this.host.now()); this.schedule(); }
 
   // --- modes and styles ---
   setLevel(level: Level): void {
     this.level = level;
     this.t.set_level(level);
+    if (level === "creative") this.unavailable = [];
     this.t.reset_apply_all();
     this.notify();
+    this.snapshot = null;
+    this.schedule();
   }
 
   /** Attaches a style: loads it from the cache or the catalog, then lets the engine validate it. Base checks keep running on failure. */
   async setStyle(ref: { id: string; version: number } | null): Promise<{ ok: true } | { ok: false; reason: StyleUnavailable }> {
-    if (!ref) { this.t.clear_style(); this.notify(); return { ok: true }; }
+    const request = ++this.styleRequest;
+    if (!ref) { this.t.clear_style(); this.notify(); this.schedule(); return { ok: true }; }
     const p = await this.catalog.profile(ref.id, ref.version);
-    if ("unavailable" in p) { this.t.clear_style(); this.notify(); return { ok: false, reason: p.unavailable }; }
-    try { this.t.set_style_json(p.json); } catch { this.t.clear_style(); this.notify(); return { ok: false, reason: "needs_update" }; }
+    if (request !== this.styleRequest) return { ok: false, reason: "not_downloaded" };
+    if ("unavailable" in p) { this.t.clear_style(); this.notify(); this.schedule(); return { ok: false, reason: p.unavailable }; }
+    try { this.t.set_style_json(p.json); } catch { this.t.clear_style(); this.notify(); this.schedule(); return { ok: false, reason: "needs_update" }; }
     this.notify();
+    this.schedule();
     return { ok: true };
   }
 
   // --- acting ---
   private async persist(): Promise<void> {
-    await idbSet(STATS_KEY, this.t.export_stats());
-    await this.recorder.record(JSON.parse(this.t.take_events()) as LearningEvent[]);
+    // Read WASM synchronously: the owner may free it while IndexedDB is pending.
+    const stats = this.t.export_stats();
+    const events = JSON.parse(this.t.take_events()) as LearningEvent[];
+    await idbSet(STATS_KEY, stats);
+    await this.recorder.record(events);
   }
 
   async apply(key: string): Promise<void> {
-    let batch: FixBatch;
-    try {
-      batch = JSON.parse(this.t.apply(key, this.host.now())) as FixBatch;
-    } catch {
-      return; // unknown key or engine error: leave findings as-is, next tick recovers
-    }
+    const stats = this.t.export_stats();
+    const batch = JSON.parse(this.t.apply(key, this.host.now())) as FixBatch;
     this.t.reset_apply_all();
+    await this.executeBatch(batch, stats);
+  }
+
+  private async executeBatch(batch: FixBatch, previousStats: string): Promise<void> {
+    const lifecycle = this.lifecycle;
     try {
-      this.host.runCommands(batch.commands);
-    } finally {
+      await this.host.runCommands(batch.commands);
+      if (!this.running || lifecycle !== this.lifecycle) return;
       this.lastApplied = batch.keys;
       await this.persist();
+    } catch (error) {
+      if (this.running && lifecycle === this.lifecycle) {
+        this.t.import_stats(previousStats);
+        this.t.take_events();
+        this.t.reset_apply_all();
+        this.t.run();
+      }
+      throw error;
+    } finally {
+      if (this.running && lifecycle === this.lifecycle) {
+        this.snapshot = null;
+        this.schedule();
+      }
     }
   }
   private lastApplied: string[] = [];
@@ -106,27 +171,13 @@ export class TeacherBridge {
 
   /** Step one: the summary. Nothing changes yet. */
   planApplyAll(): ApplyAllPlan {
-    try {
-      return JSON.parse(this.t.apply_all()) as ApplyAllPlan;
-    } catch {
-      // No safe fixes or engine error: return an empty plan, not a throw.
-      return { id: 0, pass: 0, max_passes: 0, fixes: [], skipped: [], summary: "Nothing can be fixed automatically." };
-    }
+    return JSON.parse(this.t.apply_all()) as ApplyAllPlan;
   }
   /** Step two, after the user confirms the summary. */
   async commitApplyAll(plan: ApplyAllPlan): Promise<void> {
-    let batch: FixBatch;
-    try {
-      batch = JSON.parse(this.t.commit_apply_all(JSON.stringify(plan), this.host.now())) as FixBatch;
-    } catch {
-      return; // stale plan or pass limit: summary is void, next pump re-plans
-    }
-    try {
-      this.host.runCommands(batch.commands);
-    } finally {
-      this.lastApplied = batch.keys;
-      await this.persist();
-    }
+    const stats = this.t.export_stats();
+    const batch = JSON.parse(this.t.commit_apply_all(JSON.stringify(plan), this.host.now())) as FixBatch;
+    await this.executeBatch(batch, stats);
   }
 
   async dismiss(key: string): Promise<void> {

@@ -53,7 +53,7 @@ impl Hints {
     pub fn display(&self, f: &Finding, cfg: &HintCfg) -> Display {
         let s = self.stats.get(&f.rule).cloned().unwrap_or_default();
         Display {
-            explain_open: s.applied + s.dismissed == 0,
+            explain_open: s.applied == 0 && s.dismissed == 0,
             compact: s.applied >= cfg.familiar_after_applies && s.undone_within_60s == 0,
             demoted: f.severity == Severity::Optional
                 && s.applied == 0

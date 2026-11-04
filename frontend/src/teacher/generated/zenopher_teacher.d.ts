@@ -21,10 +21,14 @@ export class WasmTeacher {
     gesture_start(): void;
     import_stats(rows_json: string): void;
     constructor(config_json: string);
+    /**
+     * Milliseconds until work is due, or -1 when the host can sleep until the next edit.
+     */
+    next_pump_delay(now_ms: number): number;
     note_undo(key: string, now_ms: number): void;
     on_change(layer_ids: Uint32Array | number[], page_changed: boolean, now_ms: number): void;
     /**
-     * Call on a timer (about every 50 ms) or requestIdleCallback. Returns a diff JSON when a run finished, else "".
+     * Drive a scheduled slice. Identical snapshots are decoded once across slices.
      */
     pump(snapshot_json: string, now_ms: number): string;
     reset_apply_all(): void;
@@ -60,6 +64,7 @@ export interface InitOutput {
     readonly wasmteacher_gesture_start: (a: number) => void;
     readonly wasmteacher_import_stats: (a: number, b: number, c: number) => [number, number];
     readonly wasmteacher_new: (a: number, b: number) => [number, number, number];
+    readonly wasmteacher_next_pump_delay: (a: number, b: number) => number;
     readonly wasmteacher_note_undo: (a: number, b: number, c: number, d: number) => void;
     readonly wasmteacher_on_change: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly wasmteacher_pump: (a: number, b: number, c: number, d: number) => [number, number, number, number];

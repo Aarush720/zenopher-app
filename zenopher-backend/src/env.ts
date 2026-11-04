@@ -10,6 +10,7 @@ export interface Env {
   // Plain variables.
   APP_ORIGIN: string;
   ALLOWED_ORIGINS: string;
+  LOCAL_DEMO_CRITIQUE?: string;
   EMAIL_API_URL?: string;
   EMAIL_FROM?: string;
   LOCAL_AUTH_ENABLED?: string;

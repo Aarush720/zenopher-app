@@ -32,9 +32,13 @@ export interface Layer {
   // Image properties
   imageUrl?: string;
   assetId?: string;
+  /** Exact uniform RGBA colour verified by the native editor during pixel export. */
+  reviewFill?: string | null;
 }
 
 export interface Design {
+  /** Revision of the live native canvas; fixes must match it. */
+  editorRevision?: number;
   id: string;
   title: string;
   width: number;
@@ -87,7 +91,12 @@ export interface StyleProfile {
 
 export interface ReviewFinding {
   id: string;
-  category: 'contrast' | 'text-size' | 'alignment' | 'spacing' | 'crop' | 'style-consistency';
+  /** Stable teacher rule id (e.g. `contrast`, `text.cropped`). Used for cloud critique. */
+  rule: string;
+  /** Measured and required values as rendered text. */
+  measured: string;
+  expected: string;
+  category: 'contrast' | 'text-size' | 'alignment' | 'spacing' | 'overlap' | 'crop' | 'style-consistency';
   title: string;
   currentValue: string;
   requiredValue: string;

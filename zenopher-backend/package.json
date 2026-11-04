@@ -9,6 +9,8 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:frontend": "vitest run --config vitest.frontend.config.ts",
+    "benchmark:teacher": "node scripts/benchmark-teacher.mjs",
     "migrate:local": "node scripts/local-dev.mjs --migrate-only",
     "migrate:local:wrangler": "wrangler d1 migrations apply zenopher-local --local --config wrangler.local.toml",
     "migrate:remote": "wrangler d1 migrations apply zenopher-v1 --remote",

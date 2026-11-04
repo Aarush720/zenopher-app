@@ -138,7 +138,7 @@ fn canonical_number(n: &serde_json::Number) -> String {
         return i.to_string();
     }
     let f = n.as_f64().unwrap_or(0.0);
-    if f.is_finite() && f.fract() == 0.0 && f >= -9e15 && f <= 9e15 {
+    if f.is_finite() && f.fract() == 0.0 && (-9e15..=9e15).contains(&f) {
         return (f as i64).to_string();
     }
     // Shortest round-trip, like JS JSON.stringify (serde_json already uses ryu/grisu).
@@ -160,7 +160,12 @@ pub fn validate_and_compile(json: &str) -> Result<CompiledStyle, StyleError> {
     }
     // 2b. Targets and tolerances must be finite numbers; NaN/inf would poison every comparison.
     for (id, s) in p.patterns.iter().chain(p.professional.iter()) {
-        for (n, v) in [("lo", s.target[0]), ("hi", s.target[1]), ("tolerance", s.tolerance), ("weight", s.weight)] {
+        for (n, v) in [
+            ("lo", s.target[0]),
+            ("hi", s.target[1]),
+            ("tolerance", s.tolerance),
+            ("weight", s.weight),
+        ] {
             if !v.is_finite() {
                 return fail(format!("{id}: {n} must be a finite number"));
             }

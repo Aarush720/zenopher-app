@@ -1,14 +1,23 @@
 // A very small IndexedDB key-value store. Every call fails soft: the teacher works without storage.
 const DB = "zenopher-teacher";
 const STORE = "kv";
+let connection: Promise<IDBDatabase> | null = null;
 
 function open(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
+  if (connection) return connection;
+  connection = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB, 1);
     req.onupgradeneeded = () => req.result.createObjectStore(STORE);
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onversionchange = () => { db.close(); connection = null; };
+      db.onclose = () => { connection = null; };
+      resolve(db);
+    };
     req.onerror = () => reject(req.error);
   });
+  void connection.catch(() => { connection = null; });
+  return connection;
 }
 
 export async function idbGet<T>(key: string): Promise<T | undefined> {
